@@ -1,0 +1,375 @@
+package rest
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"github.com/gorilla/mux"
+	"html/template"
+	"imgserver/internal/pkg/opermanager"
+	"imgserver/internal/pkg/promptmanager"
+	"log/slog"
+	"net/http"
+	"os"
+	"strconv"
+)
+
+// Шаблон для веб-страницы
+var indexTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Server Status</title>
+    <script>
+        function sendRequest() {
+            fetch('/internal_function', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.success){
+                    alert('Function executed successfully');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+    </script>
+</head>
+<body>
+    <h1>Image Server Status</h1>
+    <p>Total Requests: {{.TotalRequests}}</p>
+    <p>Images Sent: {{.ImagesSent}}</p>
+    <button onclick="sendRequest()">Execute Internal Function</button>
+</body>
+</html>
+`
+
+type Rest struct {
+	logger        *slog.Logger
+	router        *mux.Router
+	operMng       *opermanager.OperMngr
+	port          string
+	promptManager *promptmanager.PromptManager
+}
+
+func NewRest(port string,
+	logger *slog.Logger,
+	operMng *opermanager.OperMngr,
+	promptManager *promptmanager.PromptManager,
+) (*Rest, error) {
+
+	router := mux.NewRouter()
+
+	restObj := Rest{port: port,
+		router:        router,
+		logger:        logger,
+		operMng:       operMng,
+		promptManager: promptManager,
+	}
+
+	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
+	router.HandleFunc("/operation/start", restObj.handleStartOperation).Methods("POST")
+	router.HandleFunc("/operation/status/{operationId}", restObj.handleGetOperationStatus).Methods("GET")
+	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
+	router.HandleFunc("/prompt/add", restObj.handleNewPrompt).Methods("POST")
+
+	logger.Error("(It is not error!!!) Run WEB-Server on http://127.0.0.1", "port", port)
+
+	return &restObj, nil
+
+}
+
+func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// Парсим шаблон
+	tmpl, err := template.New("index").Parse(indexTemplate)
+	if err != nil {
+		rest.logger.Warn("Error parsing template %v", err)
+		http.Error(w, "Error parsing template", http.StatusInternalServerError)
+		return
+	}
+
+	//// Блокируем доступ к счетчикам
+	//mu.Lock()
+	//defer mu.Unlock()
+
+	// Выполняем шаблон
+	err = tmpl.Execute(w, StatusResponse{
+		TotalRequests: 0,
+		ImagesSent:    0,
+	})
+	if err != nil {
+		http.Error(w, "Error executing template", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Handling GET image")
+	vars := mux.Vars(r)
+	var errorAttrs ErrorAttributes
+
+	operationId, ok := vars["operationId"]
+	if !ok {
+		errorAttrs.Code = "BadRequest"
+		errorAttrs.Message = "operationId is missing in parameters"
+		var errorResp ErrorResponse
+		errorResp.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, errorResp)
+		rest.logger.Error(errorAttrs.Message)
+		return
+	}
+
+	rest.logger.Debug("Operation id " + operationId)
+
+	status, err := rest.operMng.GetOperationStatus(operationId)
+
+	if err != nil {
+		errorAttrs.Code = "InternalError"
+		errorAttrs.Message = "Can not get operation status"
+		errorAttrs.DevMessage = err.Error()
+		errorResp := ErrorResponse{errorAttrs}
+		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+	var imageResponse = ImageResponse{Id: operationId, Status: status.Status, Error: nil}
+
+	if len(status.Error) > 0 {
+		errorAttrs.Code = "operationError"
+		errorAttrs.Message = "operation have error status"
+		errorAttrs.DevMessage = status.Error
+		imageResponse.Error = &errorAttrs
+	}
+	if status.Status == opermanager.StatusError {
+		sendJSONResponse(w, http.StatusUnprocessableEntity, imageResponse)
+		return
+	}
+
+	if status.Status != opermanager.StatusDone {
+		sendJSONResponse(w, http.StatusOK, imageResponse)
+		return
+	}
+
+	fileName, err := rest.operMng.GetFileName(operationId)
+	if err != nil {
+		errorAttrs.Code = "InternalError"
+		errorAttrs.Message = "Can not get filename"
+		errorAttrs.DevMessage = err.Error()
+		errorResp := ErrorResponse{errorAttrs}
+		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+
+	rest.logger.Debug("Send file", "operatioId", operationId, "filename", fileName)
+
+	data, err := os.ReadFile(fileName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "File not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Error reading file", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Кодируем данные в base64
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	imageResult := ImageResultResponse{Image: encoded}
+	imageResponse.Result = imageResult
+
+	//sendJSONResponse(w, http.StatusOK, imageResponse)
+
+	// Кодируем структуру в JSON
+	jsonData, err := json.Marshal(imageResponse)
+	if err != nil {
+		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем размер чанка из параметров запроса, по умолчанию 1024
+	chunkSizeParam := r.URL.Query().Get("chunk_size")
+	chunkSize := 512
+	if chunkSizeParam != "" {
+		cs, err := strconv.Atoi(chunkSizeParam)
+		if err == nil && cs > 0 {
+			chunkSize = cs
+		}
+	}
+
+	// Отправляем данные чанками
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Устанавливаем заголовки для потоковой передачи
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	// Отправляем данные
+	for i := 0; i < len(jsonData); i += chunkSize {
+		end := i + chunkSize
+		if end > len(jsonData) {
+			end = len(jsonData)
+		}
+		chunk := jsonData[i:end]
+		w.Write(chunk)
+		flusher.Flush()
+	}
+}
+
+// Функция для обработки POST-запросов к /operation/start
+func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
+
+	// Создаем ответ
+	var startResp StartResponse
+	var errorAttrs ErrorAttributes
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Читаем тело запроса
+	var startReq StartRequest
+	err := json.NewDecoder(r.Body).Decode(&startReq)
+	if err != nil {
+		errorAttrs.Code = "BadRequest"
+		errorAttrs.Message = "Error parsing JSON request"
+		startResp.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, startResp)
+		rest.logger.Error(errorAttrs.Message)
+		return
+	}
+
+	// Проверяем тип операции
+	if startReq.Type != "auto" && startReq.Type != "ydart" && startReq.Type != "old" {
+		http.Error(w, "Invalid operation type", http.StatusBadRequest)
+		return
+	}
+
+	operationId, err := rest.operMng.StartOperation(startReq.Type, startReq.Prompt)
+	if err != nil {
+		errorAttrs.Code = "StartError"
+		errorAttrs.Message = "Can not start operation"
+		errorAttrs.DevMessage = err.Error()
+		startResp.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, startResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+
+	startResp.ID = operationId
+	startResp.Status = opermanager.StatusPending
+	sendJSONResponse(w, http.StatusOK, startResp)
+}
+
+// Функция для обработки POST-запросов к /operation/start
+func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Add prompt request")
+	// Создаем ответ
+	var promptResp NewPromptResponse
+	var errorAttrs ErrorAttributes
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Читаем тело запроса
+	var promptReq NewPromptRequest
+	err := json.NewDecoder(r.Body).Decode(&promptReq)
+	if err != nil {
+		errorAttrs.Code = "BadRequest"
+		errorAttrs.Message = "Error parsing JSON request"
+		promptResp.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, promptResp)
+		rest.logger.Error(errorAttrs.Message)
+		return
+	}
+
+	promptValue := promptmanager.PromptValue{Prompt: promptReq.Prompt}
+	if promptReq.Negative != nil {
+		promptValue.Negative = promptReq.Negative
+	}
+
+	err = rest.promptManager.AddNewPrompt(promptValue)
+	if err != nil {
+		errorAttrs.Code = "PromptError"
+		errorAttrs.Message = "Can not add new prompt"
+		errorAttrs.DevMessage = err.Error()
+		promptResp.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, promptResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+
+	promptResp.Status = opermanager.StatusDone
+	sendJSONResponse(w, http.StatusCreated, promptResp)
+}
+
+func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Handling GET operation status")
+	var errorAttrs ErrorAttributes
+	var statusResponse OperationStatusResponse
+
+	vars := mux.Vars(r)
+	operationId, ok := vars["operationId"]
+	if !ok {
+		errorAttrs.Code = "BadRequest"
+		errorAttrs.Message = "operationId is missing in parameters"
+		statusResponse.Error = errorAttrs
+		sendJSONResponse(w, http.StatusBadRequest, statusResponse)
+		rest.logger.Error(errorAttrs.Message)
+		return
+	}
+
+	rest.logger.Debug("operationId " + operationId)
+
+	statusResponse.ID = operationId
+
+	status, err := rest.operMng.GetOperationStatus(operationId)
+	if err != nil {
+		errorAttrs.Code = "InternalError"
+		errorAttrs.Message = "Can not get operation status"
+		errorAttrs.DevMessage = err.Error()
+		statusResponse.Error = errorAttrs
+		sendJSONResponse(w, http.StatusUnprocessableEntity, statusResponse)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+
+	rest.logger.Debug("Status", slog.String("status", string(status.Status)), slog.String("error", status.Error), slog.String("operationId", operationId))
+
+	statusResponse.Status = status.Status
+	if len(status.Error) > 0 {
+		errorAttrs.Code = "operationError"
+		errorAttrs.Message = "operation have error status"
+		errorAttrs.DevMessage = status.Error
+		statusResponse.Error = errorAttrs
+	}
+	sendJSONResponse(w, http.StatusOK, statusResponse)
+}
+
+// Универсальная функция для отправки JSON-ответов
+func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	if data != nil {
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			// Если не удалось закодировать данные в JSON, отправляем ошибку 500
+			http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+			return
+		}
+		w.Write(jsonData)
+	}
+}
+
+func (rest *Rest) Start() error {
+	return http.ListenAndServe(":"+rest.port, rest.router)
+}

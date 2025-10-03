@@ -1,0 +1,247 @@
+package appimageserver
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/go-co-op/gocron/v2"
+	"github.com/natefinch/lumberjack"
+	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/mylogger"
+	"imgserver/internal/pkg/opermanager"
+	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/rest"
+	"imgserver/internal/pkg/ydart"
+	"log/slog"
+	"os"
+	"time"
+)
+
+const (
+	FILE_PATH_OPTIONS                    = "/data/options.json"
+	checkPendingOperationScheduleDefault = "* * * * *"
+	scanImageFolderScheduleDefault       = "0 0 * * *"
+	imageLimitMinDefault                 = 1000
+	imageLimitMaxDefault                 = 2000
+)
+
+type ImgSrv struct {
+	options          ApplOptions
+	logger           *slog.Logger
+	restObj          *rest.Rest
+	dirManager       *dirmanager.DirManager
+	operManager      *opermanager.OperMngr
+	scheduler        gocron.Scheduler
+	scheduleLogLevel gocron.LogLevel
+}
+
+type ApplOptions struct {
+	LogLevel                      string `json:"log_level"`
+	ImagePath                     string `json:"image_path"`
+	ImageLimitMin                 int    `json:"image_amount_min"`
+	ImageLimitMax                 int    `json:"image_amount_max"`
+	ImageGenerateThreshold        int    `json:"image_generate_threshold"`
+	CheckPendingOperationSchedule string `json:"check_pending_cron"`
+	ScanImageFolderSchedule       string `json:"scan_image_cron"`
+}
+
+func NewImgSrv(port string) *ImgSrv {
+
+	options, err := readOptions()
+	if err != nil {
+		panic(fmt.Sprintf("Can not read Options: %v", err))
+	}
+
+	// Настройка обработчика для записи в файл с ротацией
+	fileLogger := &lumberjack.Logger{
+		Filename:   "app.log", // Имя файла логов
+		MaxSize:    100,       // Максимальный размер файла в мегабайтах
+		MaxBackups: 3,         // Максимальное количество старых файлов для хранения
+		MaxAge:     28,        // Максимальный возраст файла в днях
+		Compress:   true,      // Сжимать ли старые файлы в формате gzip
+	}
+
+	var logLevel = slog.LevelInfo
+	scheduleLogLevel := gocron.LogLevelWarn
+
+	if options.LogLevel == "DEBUG" {
+		logLevel = slog.LevelDebug
+	} else if options.LogLevel == "INFO" {
+		logLevel = slog.LevelInfo
+	} else if options.LogLevel == "WARNING" {
+		logLevel = slog.LevelWarn
+	} else {
+		logLevel = slog.LevelError
+	}
+
+	fileHandler := slog.NewTextHandler(fileLogger, &slog.HandlerOptions{
+		Level: logLevel, AddSource: true,
+	})
+
+	// Настройка обработчика для вывода на экран
+	consoleHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel, AddSource: true,
+	})
+
+	// Объединение обработчиков в группу
+	group := mylogger.NewMultiHandler(fileHandler, consoleHandler)
+
+	// Создание логгера с группой обработчиков
+	logger := slog.New(group)
+
+	logger.Info("Application started", slog.String("status", "OK"))
+	logger.Debug("This is a debug message", slog.String("detail", "additional info"))
+	logger.Warn("This is a warning message")
+	logger.Error("This is an error message", slog.String("error", "something went wrong"))
+
+	//logFormat := log.Ldate | log.Ltime | log.Lshortfile
+
+	//debugLog := log.New(mylogger.NewNullWriter(), "DEBUG\t", logFormat)
+	//infoLog := log.New(mylogger.NewNullWriter(), "INFO\t", logFormat)
+	//errorLog := log.New(os.Stderr, "ERROR\t", logFormat)
+	//isDebudDisable := true
+
+	//scheduleLogLevel := gocron.LogLevelWarn
+
+	// Test log messages
+
+	//options, err := readOptions()
+	//if err != nil {
+	//	panic(fmt.Sprintf("Can not read Options: %v", err))
+	//}
+	//
+	//if options.LogLevel == "DEBUG" {
+	//	debugLog = log.New(os.Stdout, "DEBUG\t", logFormat)
+	//	infoLog = log.New(os.Stdout, "INFO\t", logFormat)
+	//	isDebudDisable = false
+	//
+	//}
+	//if options.LogLevel == "INFO" {
+	//	infoLog = log.New(os.Stdout, "INFO\t", logFormat)
+	//}
+	//
+	//debugLog.Println("hello")
+	//infoLog.Println("hello")
+	//errorLog.Println("hello")
+	//
+	//// Инициализируем новую структуру с зависимостями приложения.
+	//logger := mylogger.New(errorLog, infoLog, debugLog)
+	//if isDebudDisable {
+	//	logger.DisableDebug()
+	//}
+
+	imageParameters := ydart.ImageParameters{Height: 480,
+		Weight: 320,
+	}
+
+	promptManager, err := promptmanager.NewPromptManager(logger)
+	if err != nil {
+		logger.Error("Error create PromptManager %v", err)
+		panic(fmt.Sprintf("error create PromptManager %v", err))
+	}
+
+	ydArt := ydart.NewYdArt(&imageParameters, promptManager, logger)
+	iYdArt := (opermanager.ImageProvider)(ydArt)
+
+	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
+	if err != nil {
+		logger.Error("Error create DirManager %v", err)
+		panic(fmt.Sprintf("error create DirManager %v", err))
+	}
+
+	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold, dirManager, logger)
+	operMng.AddImageProvider(&iYdArt)
+
+	restObj, err := rest.NewRest(port, logger, operMng, promptManager)
+	if err != nil {
+		logger.Error("Error create Rest %v", err)
+		panic(fmt.Sprintf("error create Rest %v", err))
+	}
+
+	return &ImgSrv{
+		options:          options,
+		logger:           logger,
+		restObj:          restObj,
+		dirManager:       dirManager,
+		operManager:      operMng,
+		scheduleLogLevel: scheduleLogLevel,
+	}
+}
+func (app *ImgSrv) Start() {
+	err := app.dirManager.Start()
+	if err != nil {
+		app.logger.Error("Error start dirManager", err)
+	}
+
+	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.UTC),
+		gocron.WithLogger(
+			gocron.NewLogger(app.scheduleLogLevel),
+		))
+	app.scheduler = scheduler
+
+	// Проверка статуса невыполненных заданий
+	_, err = app.scheduler.NewJob(
+		gocron.CronJob(
+			// standard cron tab parsing
+			app.options.CheckPendingOperationSchedule,
+			false,
+		),
+		gocron.NewTask(
+			func() {
+				app.operManager.CheckPendingOperations()
+			},
+		),
+	)
+
+	// Сканирование каталога с изображениями
+	_, err = app.scheduler.NewJob(
+		gocron.CronJob(
+			// standard cron tab parsing
+			app.options.ScanImageFolderSchedule,
+			false,
+		),
+		gocron.NewTask(
+			func() {
+				err := app.dirManager.ReadFiles()
+				if err != nil {
+					app.logger.Error("Error when clear operation", "err", err)
+				}
+			},
+		),
+	)
+
+	// Запуск планировщика в отдельной горутине
+	go func() {
+		app.scheduler.Start()
+	}()
+
+	err = app.restObj.Start()
+	app.logger.Error("Error start rest", err)
+}
+
+func (app *ImgSrv) Stop() {
+	_ = app.scheduler.Shutdown()
+}
+
+func readOptions() (ApplOptions, error) {
+	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
+	var data ApplOptions
+	err := json.Unmarshal(plan, &data)
+
+	if data.CheckPendingOperationSchedule == "" {
+		data.CheckPendingOperationSchedule = checkPendingOperationScheduleDefault
+	}
+
+	if data.ScanImageFolderSchedule == "" {
+		data.ScanImageFolderSchedule = scanImageFolderScheduleDefault
+	}
+
+	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
+		data.ImageLimitMin = imageLimitMinDefault
+		data.ImageLimitMax = imageLimitMaxDefault
+	}
+
+	if data.ImageLimitMin >= data.ImageLimitMax {
+		panic("Option image_amount_min must be lower then image_amount_max")
+	}
+	return data, err
+}
