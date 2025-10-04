@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/natefinch/lumberjack"
 	"imgserver/internal/pkg/mylogger"
+	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/rest"
 	"log/slog"
 	"os"
@@ -106,7 +107,9 @@ func NewImgSrv(port string) *ImgSrv {
 	//	logger.DisableDebug()
 	//}
 
-	restObj, err := rest.NewRest(port, logger)
+	operMng := opermanager.NewOperMngr()
+
+	restObj, err := rest.NewRest(port, logger, operMng)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
 		panic(fmt.Sprintf("error create Rest %v", err))
