@@ -45,6 +45,7 @@ func NewRest(port string,
 	}
 
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
+	router.HandleFunc("/operation/{fileName}", restObj.handleGetImage).Methods("GET")
 
 	logger.Error("(It is not error!!!) Run WEB-Server on http://127.0.0.1:%s", port)
 
@@ -74,6 +75,18 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error executing template", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Handling GET image")
+	vars := mux.Vars(r)
+	fileName, ok := vars["fileName"]
+	if !ok {
+		rest.logger.Error("fileName is missing in parameters")
+	}
+
+	rest.logger.Debug("File name " + fileName)
+
 }
 
 func (rest *Rest) Start() error {
