@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/natefinch/lumberjack"
 	"imgserver/internal/pkg/mylogger"
+	"imgserver/internal/pkg/rest"
 	"log/slog"
 	"os"
 )
@@ -14,6 +15,7 @@ const FILE_PATH_OPTIONS = "/data/options.json"
 type ImgSrv struct {
 	options ApplOptions
 	logger  *slog.Logger
+	restObj *rest.Rest
 }
 
 type ApplOptions struct {
@@ -104,13 +106,24 @@ func NewImgSrv(port string) *ImgSrv {
 	//	logger.DisableDebug()
 	//}
 
+	restObj, err := rest.NewRest(port, logger)
+	if err != nil {
+		logger.Error("Error create Rest %v", err)
+		panic(fmt.Sprintf("error create Rest %v", err))
+	}
+
 	return &ImgSrv{
 		options: options,
 		logger:  logger,
+		restObj: restObj,
 	}
 }
-func (app *ImgSrv) Start() {}
-func (app *ImgSrv) Stop()  {}
+func (app *ImgSrv) Start() {
+	err := app.restObj.Start()
+	app.logger.Error("Error start rest", err)
+}
+
+func (app *ImgSrv) Stop() {}
 
 func readOptions() (ApplOptions, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
