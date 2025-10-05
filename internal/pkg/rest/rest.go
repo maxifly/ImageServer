@@ -1,12 +1,15 @@
 package rest
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/opermanager"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 )
 
 // Шаблон для веб-страницы
@@ -97,8 +100,111 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 
 	rest.logger.Debug("Operation id " + operationId)
 
-	//TODO Както получить имя файла
+	status, err := rest.operMng.GetOperationStatus(operationId)
 
+	if err != nil {
+		errorAttrs.Code = "InternalError"
+		errorAttrs.Message = "Can not get operation status"
+		errorAttrs.DevMessage = err.Error()
+		errorResp := ErrorResponse{errorAttrs}
+		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+	var imageResponse = ImageResponse{Id: operationId, Status: status.Status}
+
+	if len(status.Error) > 0 {
+		errorAttrs.Code = "operationError"
+		errorAttrs.Message = "operation have error status"
+		errorAttrs.DevMessage = status.Error
+		imageResponse.Error = errorAttrs
+	}
+
+	if status.Status != "done" {
+		sendJSONResponse(w, http.StatusOK, imageResponse)
+	}
+
+	fileName, err := rest.operMng.GetFileName(operationId)
+	if err != nil {
+		errorAttrs.Code = "InternalError"
+		errorAttrs.Message = "Can not get filename"
+		errorAttrs.DevMessage = err.Error()
+		errorResp := ErrorResponse{errorAttrs}
+		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
+		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		return
+	}
+
+	// Откроем файл и добавим его в ответ
+	// Открываем файл
+	//file, err := os.Open(fileName)
+	//if err != nil {
+	//	http.Error(w, "File not found", http.StatusNotFound)
+	//	return
+	//}
+	//defer file.Close()
+	//
+	//// Читаем файл
+	//data, err := io.ReadAll(file)
+	//if err != nil {
+	//	http.Error(w, "Error reading file", http.StatusInternalServerError)
+	//	return
+	//}
+
+	data, err := os.ReadFile(fileName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "File not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Error reading file", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Кодируем данные в base64
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	imageResult := ImageResultResponse{Image: encoded}
+	imageResponse.Result = imageResult
+
+	// Кодируем структуру в JSON
+	jsonData, err := json.Marshal(imageResponse)
+	if err != nil {
+		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем размер чанка из параметров запроса, по умолчанию 1024
+	chunkSizeParam := r.URL.Query().Get("chunk_size")
+	chunkSize := 256
+	if chunkSizeParam != "" {
+		cs, err := strconv.Atoi(chunkSizeParam)
+		if err == nil && cs > 0 {
+			chunkSize = cs
+		}
+	}
+
+	// Отправляем данные чанками
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Устанавливаем заголовки для потоковой передачи
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	// Отправляем данные
+	for i := 0; i < len(jsonData); i += chunkSize {
+		end := i + chunkSize
+		if end > len(jsonData) {
+			end = len(jsonData)
+		}
+		chunk := jsonData[i:end]
+		w.Write(chunk)
+		flusher.Flush()
+	}
 }
 
 // Функция для обработки POST-запросов к /operation/start

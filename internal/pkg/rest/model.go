@@ -1,11 +1,15 @@
 package rest
 
+type ImageResultResponse struct {
+	Image string `json:"image"`
+}
+
 // Response структура для отправки данных в формате JSON
-type Response struct {
-	Done     bool `json:"done"`
-	Response struct {
-		Image string `json:"image"`
-	} `json:"response"`
+type ImageResponse struct {
+	Id     string              `json:"id"`
+	Status string              `json:"status"`
+	Error  ErrorAttributes     `json:"error,omitempty"`
+	Result ImageResultResponse `json:"response,omitempty"`
 }
 
 // StatusResponse структура для отображения статуса
