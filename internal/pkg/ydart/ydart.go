@@ -16,16 +16,23 @@ import (
 )
 
 const (
-	CoreBaseURL string = "https://llm.api.cloud.yandex.net"
+	FILE_PATH_OPTIONS        = "/data/ydart-options.json"
+	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
 )
 
+type ImageParameters struct {
+	Height int
+	Weight int
+}
+type YdArtOption struct {
+	FolderId string `json:"folder_id"`
+	ApiKey   string `json:"api_key"`
+}
 type YdArt struct {
-	httpClient  *http.Client
-	logger      *slog.Logger
-	folderId    string
-	apiKey      string
-	imageHeight int
-	imageWeight int
+	httpClient      *http.Client
+	logger          *slog.Logger
+	options         *YdArtOption
+	imageParameters *ImageParameters
 }
 
 type getImageResponse struct {
@@ -47,14 +54,17 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(apiKey string, folderId string, height int, weight int, logger *slog.Logger) *YdArt {
+func NewYdArt(imageParameters *ImageParameters, logger *slog.Logger) *YdArt {
+	options, err := readOptions()
+	if err != nil {
+		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
+	}
+	//logger.Debug("Options ", "options", options)
 	return &YdArt{
-		httpClient:  http.DefaultClient,
-		logger:      logger,
-		folderId:    folderId,
-		apiKey:      apiKey,
-		imageHeight: height,
-		imageWeight: weight,
+		httpClient:      http.DefaultClient,
+		logger:          logger,
+		options:         &options,
+		imageParameters: imageParameters,
 	}
 }
 
@@ -62,7 +72,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
-	err := ydArt.innerRequest(url, "GET", http.StatusOK, &response)
+	err := ydArt.innerRequest("GET", url, http.StatusOK, &response)
 	if err != nil {
 		resultError := fmt.Errorf("error when get image: %v", err)
 		return false, resultError
@@ -70,7 +80,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 
 	if response.Done {
 		if response.Response.Image != "" {
-			err := processImage(filename, response.Response.Image, ydArt.imageWeight, ydArt.imageHeight)
+			err := processImage(filename, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
 			if err != nil {
 				resultError := fmt.Errorf("error image processing: %v", err)
 				ydArt.logger.Error(resultError.Error())
@@ -99,8 +109,10 @@ func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, 
 	}
 
 	// Устанавливаем заголовок авторизации
-	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.apiKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.options.ApiKey))
 	req.Header.Set("Accept", "application/json") // Ожидание ответа в формате JSON
+
+	ydArt.logger.Debug("request %v", req)
 
 	// Выполняем запрос
 	resp, err := ydArt.httpClient.Do(req)
@@ -181,4 +193,11 @@ func processImage(fileName string, imageBase64 string, width, height int) error 
 	}
 
 	return nil
+}
+
+func readOptions() (YdArtOption, error) {
+	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
+	var data YdArtOption
+	err := json.Unmarshal(plan, &data)
+	return data, err
 }

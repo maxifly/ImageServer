@@ -7,6 +7,7 @@ import (
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/rest"
+	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"os"
 )
@@ -107,9 +108,13 @@ func NewImgSrv(port string) *ImgSrv {
 	//	logger.DisableDebug()
 	//}
 
+	imageParameters := ydart.ImageParameters{Height: 480,
+		Weight: 320,
+	}
 	operMng := opermanager.NewOperMngr()
+	ydArt := ydart.NewYdArt(&imageParameters, logger)
 
-	restObj, err := rest.NewRest(port, logger, operMng)
+	restObj, err := rest.NewRest(port, logger, operMng, ydArt)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
 		panic(fmt.Sprintf("error create Rest %v", err))

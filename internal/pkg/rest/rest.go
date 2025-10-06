@@ -3,13 +3,16 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/opermanager"
+	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Шаблон для веб-страницы
@@ -18,11 +21,34 @@ var indexTemplate = `
 <html>
 <head>
     <title>Image Server Status</title>
+    <script>
+        function sendRequest() {
+            fetch('/internal_function', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.success){
+                    alert('Function executed successfully');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+    </script>
 </head>
 <body>
     <h1>Image Server Status</h1>
     <p>Total Requests: {{.TotalRequests}}</p>
     <p>Images Sent: {{.ImagesSent}}</p>
+    <button onclick="sendRequest()">Execute Internal Function</button>
 </body>
 </html>
 `
@@ -32,11 +58,13 @@ type Rest struct {
 	router  *mux.Router
 	operMng *opermanager.OperMngr
 	port    string
+	ydArt   *ydart.YdArt
 }
 
 func NewRest(port string,
 	logger *slog.Logger,
 	operMng *opermanager.OperMngr,
+	ydart *ydart.YdArt, //TODO Как-то убрать прямой вызов яндексарта и действовать через менеджер операций
 ) (*Rest, error) {
 
 	router := mux.NewRouter()
@@ -45,12 +73,14 @@ func NewRest(port string,
 		router:  router,
 		logger:  logger,
 		operMng: operMng,
+		ydArt:   ydart,
 	}
 
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
 	router.HandleFunc("/operation/start", restObj.handleGetImage).Methods("POST")
 	router.HandleFunc("/operation/status/{operationId}", restObj.handleGetOperationStatus).Methods("GET")
 	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
+	router.HandleFunc("/internal_function", restObj.handleInternalFunction).Methods("POST")
 
 	logger.Error("(It is not error!!!) Run WEB-Server on http://127.0.0.1:%s", port)
 
@@ -80,6 +110,32 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error executing template", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (rest *Rest) handleInternalFunction(w http.ResponseWriter, r *http.Request) {
+
+	// Получаем текущее время
+	currentTime := time.Now()
+
+	// Преобразуем время в количество секунд с начала эпохи
+	unixSeconds := currentTime.Unix()
+
+	// Преобразуем секунды в строку
+	secondsString := fmt.Sprintf("%d", unixSeconds)
+
+	// Новое имя файла с добавленными секундами
+	newFilename := "testImage" + "-" + secondsString + ".jpeg"
+
+	// Вызываем внутреннюю функцию
+	done, err := rest.ydArt.GetImage("fbv9qbisqobto6h0po79", newFilename)
+	if err != nil {
+		rest.logger.Error("ERROR " + err.Error())
+		return
+	}
+	rest.logger.Info("Get image result %v", done)
+
+	// Отправляем успешный ответ
+	sendJSONResponse(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
