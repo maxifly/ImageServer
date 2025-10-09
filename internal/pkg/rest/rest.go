@@ -125,14 +125,17 @@ func (rest *Rest) handleInternalFunction(w http.ResponseWriter, r *http.Request)
 
 	// Новое имя файла с добавленными секундами
 	newFilename := "testImage" + "-" + secondsString + ".jpeg"
+	rest.logger.Debug(newFilename)
 
 	// Вызываем внутреннюю функцию
-	done, err := rest.ydArt.GetImage("fbv9qbisqobto6h0po79", newFilename)
-	if err != nil {
-		rest.logger.Error("ERROR " + err.Error())
-		return
-	}
-	rest.logger.Info("Get image result %v", done)
+	//done, err := rest.ydArt.GetImage("fbvugu9865dhmqpvh0pl", newFilename)
+	//done, err := rest.ydArt.Generate()
+	rest.operMng.CheckPendingOperations()
+	//if err != nil {
+	//	rest.logger.Error("ERROR " + err.Error())
+	//	return
+	//}
+	//rest.logger.Info("Get image result %v", done)
 
 	// Отправляем успешный ответ
 	sendJSONResponse(w, http.StatusOK, map[string]bool{"success": true})
@@ -337,7 +340,7 @@ func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rest.logger.Debug("Status "+status.Status, slog.String("error", status.Error), slog.String("operationId", operationId))
+	rest.logger.Debug("Status", slog.String("status", string(status.Status)), slog.String("error", status.Error), slog.String("operationId", operationId))
 
 	statusResponse.Status = status.Status
 	if len(status.Error) > 0 {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"golang.org/x/image/draw"
 	"image"
+	"strconv"
+
 	//"image/draw"
 	"image/jpeg"
 	"io"
@@ -36,18 +38,34 @@ type YdArt struct {
 }
 
 type getImageResponse struct {
-	Id string `json:"id"`
-	//Description string `json:"description"`
-	//CreatedAt   string `json:"createdAt"`
-	//CreatedBy   string `json:"createdBy"`
-	//ModifiedAt  string `json:"modifiedAt"`
-	Done bool `json:"done"`
-	//Metadata    string `json:"metadata"`
+	Id           string        `json:"id"`
+	Done         bool          `json:"done"`
 	Error        string        `json:"error"`
 	ErrorCode    string        `json:"code"`
 	ErrorMessage string        `json:"message"`
 	ErrorDetails []string      `json:"details"`
 	Response     imageResponse `json:"response"`
+}
+
+type generateRequest struct {
+	ModelUri          string             `json:"model_uri"`
+	Messages          []*generatePrompt  `json:"messages"`
+	GenerationOptions *generationOptions `json:"generation_options"`
+}
+
+type generationOptions struct {
+	MimeType    string       `json:"mime_type"`
+	AspectRatio *aspectRatio `json:"aspectRatio"`
+}
+
+type generatePrompt struct {
+	Text   string `json:"text"`
+	Weight int    `json:"weight"`
+}
+
+type aspectRatio struct {
+	WidthRatio  string `json:"widthRatio"`
+	HeightRatio string `json:"heightRatio"`
 }
 
 type imageResponse struct {
@@ -68,11 +86,66 @@ func NewYdArt(imageParameters *ImageParameters, logger *slog.Logger) *YdArt {
 	}
 }
 
+func (ydArt *YdArt) Generate() (string, error) {
+	prompt, err := ydArt.getPrompt()
+	if err != nil {
+		return "", err
+	}
+
+	generatePromptMessage := generatePrompt{Text: prompt,
+		Weight: 1}
+
+	ratio := aspectRatio{
+		HeightRatio: strconv.Itoa(ydArt.imageParameters.Height),
+		WidthRatio:  strconv.Itoa(ydArt.imageParameters.Weight),
+	}
+
+	generationOpt := generationOptions{
+		MimeType:    "image/jpeg",
+		AspectRatio: &ratio,
+	}
+
+	request := generateRequest{
+		ModelUri:          "art://" + ydArt.options.FolderId + "/yandex-art/latest",
+		Messages:          []*generatePrompt{&generatePromptMessage},
+		GenerationOptions: &generationOpt,
+	}
+
+	url := fmt.Sprintf("%s/foundationModels/v1/imageGenerationAsync", CoreBaseURL)
+	var response getImageResponse
+	err = ydArt.innerRequest("POST", url, http.StatusOK, request, &response)
+
+	if err != nil {
+		resultError := fmt.Errorf("error generate image: %v", err)
+		ydArt.logger.Error(resultError.Error())
+		return "", resultError
+	}
+
+	if response.Error != "" {
+		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
+		ydArt.logger.Error(resultError.Error())
+		return "", resultError
+	}
+
+	if response.Id == "" {
+		resultError := fmt.Errorf("YdArt return empty operatioId")
+		ydArt.logger.Error(resultError.Error())
+		return "", resultError
+	}
+
+	ydArt.logger.Debug("YandexArt operation id", "id", response.Id)
+	return response.Id, nil
+}
+
+func (ydArt *YdArt) getPrompt() (string, error) {
+	return "test", nil
+}
+
 func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) {
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
-	err := ydArt.innerRequest("GET", url, http.StatusOK, &response)
+	err := ydArt.innerRequest("GET", url, http.StatusOK, nil, &response)
 	if err != nil {
 		resultError := fmt.Errorf("error when get image: %v", err)
 		return false, resultError
@@ -97,11 +170,26 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 	return false, nil
 }
 
-func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, result interface{}) error {
+func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, requestBody interface{}, result interface{}) error {
 	ydArt.logger.Debug("Execute get request %s", url)
 
-	// Создаем новый HTTP-запрос
-	req, err := http.NewRequest(method, url, nil)
+	var req *http.Request
+	var err error
+
+	if requestBody == nil {
+		// Создаем новый HTTP-запрос
+		req, err = http.NewRequest(method, url, nil)
+	} else {
+		// Преобразуем структуру в JSON
+		jsonData, err1 := json.Marshal(requestBody)
+		if err1 != nil {
+			resultError := fmt.Errorf("error when data marshalling: %v", err1)
+			ydArt.logger.Error("error when data marshaling", resultError)
+			return resultError
+		}
+
+		req, err = http.NewRequest(method, url, bytes.NewBuffer(jsonData))
+	}
 	if err != nil {
 		resultError := fmt.Errorf("error when create request: %v", err)
 		ydArt.logger.Error(resultError.Error())

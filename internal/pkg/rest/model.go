@@ -1,5 +1,7 @@
 package rest
 
+import "imgserver/internal/pkg/opermanager"
+
 type ImageResultResponse struct {
 	Image string `json:"image"`
 }
@@ -7,7 +9,7 @@ type ImageResultResponse struct {
 // Response структура для отправки данных в формате JSON
 type ImageResponse struct {
 	Id     string              `json:"id"`
-	Status string              `json:"status"`
+	Status opermanager.Status  `json:"status"`
 	Error  ErrorAttributes     `json:"error,omitempty"`
 	Result ImageResultResponse `json:"response,omitempty"`
 }
@@ -43,7 +45,7 @@ type StartResponse struct {
 
 // OperationStatusResponse структура для исходящего ответа
 type OperationStatusResponse struct {
-	ID     string          `json:"id"`
-	Status string          `json:"status"`
-	Error  ErrorAttributes `json:"error,omitempty"`
+	ID     string             `json:"id"`
+	Status opermanager.Status `json:"status"`
+	Error  ErrorAttributes    `json:"error,omitempty"`
 }

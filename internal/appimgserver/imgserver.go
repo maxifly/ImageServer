@@ -111,9 +111,9 @@ func NewImgSrv(port string) *ImgSrv {
 	imageParameters := ydart.ImageParameters{Height: 480,
 		Weight: 320,
 	}
-	operMng := opermanager.NewOperMngr()
-	ydArt := ydart.NewYdArt(&imageParameters, logger)
 
+	ydArt := ydart.NewYdArt(&imageParameters, logger)
+	operMng := opermanager.NewOperMngr(ydArt, logger)
 	restObj, err := rest.NewRest(port, logger, operMng, ydArt)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
