@@ -2,8 +2,10 @@ package opermanager
 
 import (
 	"fmt"
+	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/ydart"
 	"log/slog"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -30,11 +32,14 @@ const (
 )
 
 type OperMngr struct {
+	directoryPath      string
 	pendingOperations  *cache.Cache
 	completeOperations *cache.Cache
 	logger             *slog.Logger
 	ydArt              *ydart.YdArt
+	dirManager         *dirmanager.DirManager
 	idMutex            *IdMutex
+	ydArtActioner      Actioner
 }
 
 //TODO Всё сделать
@@ -52,22 +57,81 @@ type Operation struct {
 	status     *OperStatus
 }
 
-func NewOperMngr(ydArt *ydart.YdArt, logger *slog.Logger) *OperMngr {
+type Actioner struct {
+	lastCallTime time.Time
+	threshold    time.Duration
+}
+
+func NewOperMngr(directoryPath string, thresholdMinutes int,
+	dirManager *dirmanager.DirManager, ydArt *ydart.YdArt,
+	logger *slog.Logger) *OperMngr {
+
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
 	operMng := OperMngr{
+		directoryPath:      directoryPath,
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
 		ydArt:              ydArt,
+		dirManager:         dirManager,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
+		ydArtActioner: Actioner{lastCallTime: time.Time{},
+			threshold: time.Duration(thresholdMinutes) * time.Minute},
 	}
 	return &operMng
 }
+func (op *OperMngr) StartOperation(optype string) (string, error) {
+	if optype == "ydart" {
+		return op.startYdArtOperation()
+	} else if optype == "old" {
+		return op.startOldPictureOperation()
+	}
+	return op.startAutoOperation()
 
-func (op *OperMngr) StartOperation() (string, error) {
-	// TODO Пока все операции, это YandexArt
+}
+
+func (op *OperMngr) startAutoOperation() (string, error) {
+	op.logger.Info("Start auto operation")
+	now := time.Now()
+	if now.Sub(op.ydArtActioner.lastCallTime) >= op.ydArtActioner.threshold {
+		op.logger.Debug("Threshold")
+		// YdArt давно не вызывался
+		operation, err := op.startYdArtOperation()
+		if err != nil {
+			return "", err
+		}
+		// Обновляем время последнего вызова
+		op.ydArtActioner.lastCallTime = now
+		return operation, nil
+	} else {
+		// Вызываем менеджер старых изображений
+		return op.startOldPictureOperation()
+	}
+}
+
+func (op *OperMngr) startOldPictureOperation() (string, error) {
+	op.logger.Info("Start old picture operation")
+	file := op.dirManager.GetRandomFile()
+
+	operation := Operation{
+		Id:         op.generateId(),
+		ExternalId: "dirManagerOperation",
+		Type:       OldPicture,
+		FileName:   file,
+		status: &OperStatus{
+			Status: StatusDone,
+			Error:  "",
+		},
+	}
+	op.completeOperations.SetDefault(operation.Id, operation)
+	return operation.Id, nil
+
+}
+
+func (op *OperMngr) startYdArtOperation() (string, error) {
+	op.logger.Info("Start yart operation")
 	externalId, err := op.ydArt.Generate()
 	if err != nil {
 		resultError := fmt.Errorf("error YdArt generate %v", err)
@@ -117,6 +181,8 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		completeOperation.FileName = fileName
 		op.completeOperations.SetDefault(id, completeOperation)
 		op.pendingOperations.Delete(id)
+
+		op.dirManager.AddFile(fileName)
 	}
 
 	return &OperStatus{Status: StatusPending}, nil
@@ -160,5 +226,5 @@ func (op *OperMngr) generateId() string {
 
 func (op *OperMngr) generateFileName(id string) string {
 	unixSeconds := time.Now().Unix()
-	return "f" + strconv.Itoa(int(unixSeconds))
+	return filepath.Join(op.directoryPath, "f"+strconv.Itoa(int(unixSeconds)))
 }
