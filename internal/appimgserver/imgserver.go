@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/natefinch/lumberjack"
+	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/rest"
@@ -15,13 +16,17 @@ import (
 const FILE_PATH_OPTIONS = "/data/options.json"
 
 type ImgSrv struct {
-	options ApplOptions
-	logger  *slog.Logger
-	restObj *rest.Rest
+	options    ApplOptions
+	logger     *slog.Logger
+	restObj    *rest.Rest
+	dirManager *dirmanager.DirManager
 }
 
 type ApplOptions struct {
-	LogLevel string `json:"log_level"`
+	LogLevel               string `json:"log_level"`
+	ImagePath              string `json:"image_path"`
+	ImageLimit             int    `json:"image_amount_limit"`
+	ImageGenerateThreshold int    `json:"image_generate_threshold"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -113,7 +118,13 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	ydArt := ydart.NewYdArt(&imageParameters, logger)
-	operMng := opermanager.NewOperMngr(ydArt, logger)
+	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimit, logger)
+	if err != nil {
+		logger.Error("Error create DirManager %v", err)
+		panic(fmt.Sprintf("error create Rest %v", err))
+	}
+
+	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold, dirManager, ydArt, logger)
 	restObj, err := rest.NewRest(port, logger, operMng, ydArt)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
@@ -121,13 +132,18 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	return &ImgSrv{
-		options: options,
-		logger:  logger,
-		restObj: restObj,
+		options:    options,
+		logger:     logger,
+		restObj:    restObj,
+		dirManager: dirManager,
 	}
 }
 func (app *ImgSrv) Start() {
-	err := app.restObj.Start()
+	err := app.dirManager.Start()
+	if err != nil {
+		app.logger.Error("Error start dirManager", err)
+	}
+	err = app.restObj.Start()
 	app.logger.Error("Error start rest", err)
 }
 

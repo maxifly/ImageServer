@@ -287,14 +287,13 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO Проверяем тип операции
-	//if startReq.Type != "auto" {
-	//	http.Error(w, "Invalid operation type", http.StatusBadRequest)
-	//	return
-	//}
+	// Проверяем тип операции
+	if startReq.Type != "auto" && startReq.Type != "ydart" && startReq.Type != "old" {
+		http.Error(w, "Invalid operation type", http.StatusBadRequest)
+		return
+	}
 
-	//TODO Yадо как-то стартовать операцию разного типа
-	operationId, err := rest.operMng.StartOperation()
+	operationId, err := rest.operMng.StartOperation(startReq.Type)
 	if err != nil {
 		errorAttrs.Code = "StartError"
 		errorAttrs.Message = "Can not start operation"

@@ -33,17 +33,19 @@ func NewDirManager(path string, limit int, logger *slog.Logger) (*DirManager, er
 		directoryPath: path,
 		limit:         limit,
 		logger:        logger,
+		fileList:      []fileInfo{},
 		fileMap:       make(map[string]struct{}),
 	}
-	err := manager.readFiles()
-	if err != nil {
-		return nil, err
-	}
+
 	return manager, nil
 }
+func (dm *DirManager) Start() error {
+	go dm.ReadFiles()
+	return nil
+}
 
-// readFiles читает все файлы из каталога и сохраняет их информацию в список и карту
-func (dm *DirManager) readFiles() error {
+// ReadFiles читает все файлы из каталога и сохраняет их информацию в список и карту
+func (dm *DirManager) ReadFiles() error {
 	files, err := os.ReadDir(dm.directoryPath)
 	if err != nil {
 		return err
