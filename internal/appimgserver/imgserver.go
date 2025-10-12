@@ -3,6 +3,7 @@ package appimageserver
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/go-co-op/gocron/v2"
 	"github.com/natefinch/lumberjack"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/mylogger"
@@ -11,22 +12,30 @@ import (
 	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"os"
+	"time"
 )
 
 const FILE_PATH_OPTIONS = "/data/options.json"
+const checkPendingOperationScheduleDefault = "* * * * *"
+const scanImageFolderScheduleDefault = "0 0 * * *"
 
 type ImgSrv struct {
-	options    ApplOptions
-	logger     *slog.Logger
-	restObj    *rest.Rest
-	dirManager *dirmanager.DirManager
+	options          ApplOptions
+	logger           *slog.Logger
+	restObj          *rest.Rest
+	dirManager       *dirmanager.DirManager
+	operManager      *opermanager.OperMngr
+	scheduler        gocron.Scheduler
+	scheduleLogLevel gocron.LogLevel
 }
 
 type ApplOptions struct {
-	LogLevel               string `json:"log_level"`
-	ImagePath              string `json:"image_path"`
-	ImageLimit             int    `json:"image_amount_limit"`
-	ImageGenerateThreshold int    `json:"image_generate_threshold"`
+	LogLevel                      string `json:"log_level"`
+	ImagePath                     string `json:"image_path"`
+	ImageLimit                    int    `json:"image_amount_limit"`
+	ImageGenerateThreshold        int    `json:"image_generate_threshold"`
+	CheckPendingOperationSchedule string `json:"check_pending_cron"`
+	ScanImageFolderSchedule       string `json:"scan_image_cron"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -46,6 +55,7 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	var logLevel = slog.LevelInfo
+	scheduleLogLevel := gocron.LogLevelWarn
 
 	if options.LogLevel == "DEBUG" {
 		logLevel = slog.LevelDebug
@@ -132,10 +142,12 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	return &ImgSrv{
-		options:    options,
-		logger:     logger,
-		restObj:    restObj,
-		dirManager: dirManager,
+		options:          options,
+		logger:           logger,
+		restObj:          restObj,
+		dirManager:       dirManager,
+		operManager:      operMng,
+		scheduleLogLevel: scheduleLogLevel,
 	}
 }
 func (app *ImgSrv) Start() {
@@ -143,15 +155,68 @@ func (app *ImgSrv) Start() {
 	if err != nil {
 		app.logger.Error("Error start dirManager", err)
 	}
+
+	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.UTC),
+		gocron.WithLogger(
+			gocron.NewLogger(app.scheduleLogLevel),
+		))
+	app.scheduler = scheduler
+
+	// Проверка статуса невыполненных заданий
+	_, err = app.scheduler.NewJob(
+		gocron.CronJob(
+			// standard cron tab parsing
+			app.options.CheckPendingOperationSchedule,
+			false,
+		),
+		gocron.NewTask(
+			func() {
+				app.operManager.CheckPendingOperations()
+			},
+		),
+	)
+
+	// Сканирование каталога с изображениями
+	_, err = app.scheduler.NewJob(
+		gocron.CronJob(
+			// standard cron tab parsing
+			app.options.ScanImageFolderSchedule,
+			false,
+		),
+		gocron.NewTask(
+			func() {
+				err := app.dirManager.ReadFiles()
+				if err != nil {
+					app.logger.Error("Error when clear operation", "err", err)
+				}
+			},
+		),
+	)
+
+	// Запуск планировщика в отдельной горутине
+	go func() {
+		app.scheduler.Start()
+	}()
+
 	err = app.restObj.Start()
 	app.logger.Error("Error start rest", err)
 }
 
-func (app *ImgSrv) Stop() {}
+func (app *ImgSrv) Stop() {
+	_ = app.scheduler.Shutdown()
+}
 
 func readOptions() (ApplOptions, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
 	var data ApplOptions
 	err := json.Unmarshal(plan, &data)
+
+	if data.CheckPendingOperationSchedule == "" {
+		data.CheckPendingOperationSchedule = checkPendingOperationScheduleDefault
+	}
+
+	if data.ScanImageFolderSchedule == "" {
+		data.ScanImageFolderSchedule = scanImageFolderScheduleDefault
+	}
 	return data, err
 }
