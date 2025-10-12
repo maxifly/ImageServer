@@ -3,7 +3,6 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/opermanager"
@@ -12,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 )
 
 // Шаблон для веб-страницы
@@ -115,21 +113,22 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (rest *Rest) handleInternalFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Получаем текущее время
-	currentTime := time.Now()
-
-	// Преобразуем время в количество секунд с начала эпохи
-	unixSeconds := currentTime.Unix()
-
-	// Преобразуем секунды в строку
-	secondsString := fmt.Sprintf("%d", unixSeconds)
-
-	// Новое имя файла с добавленными секундами
-	newFilename := "testImage" + "-" + secondsString + ".jpeg"
-	rest.logger.Debug(newFilename)
+	//currentTime := time.Now()
+	//
+	//// Преобразуем время в количество секунд с начала эпохи
+	//unixSeconds := currentTime.Unix()
+	//
+	//// Преобразуем секунды в строку
+	//secondsString := fmt.Sprintf("%d", unixSeconds)
+	//
+	//// Новое имя файла с добавленными секундами
+	//newFilename := "testImage" + "-" + secondsString + ".jpeg"
+	//rest.logger.Debug(newFilename)
 
 	// Вызываем внутреннюю функцию
 	//done, err := rest.ydArt.GetImage("fbvugu9865dhmqpvh0pl", newFilename)
 	//done, err := rest.ydArt.Generate()
+	rest.operMng.StartOperation("auto")
 	rest.operMng.CheckPendingOperations()
 	//if err != nil {
 	//	rest.logger.Error("ERROR " + err.Error())

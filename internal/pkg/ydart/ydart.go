@@ -165,7 +165,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 			return false, resultError
 		}
 	}
-
+	//TODO Надо как-то обработать возврат ошибки из Янедекса
 	//TODO Надо как-то обработать возврат ошибки
 	return false, nil
 }

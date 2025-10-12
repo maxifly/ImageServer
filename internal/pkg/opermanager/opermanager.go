@@ -167,16 +167,17 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 			return nil, resultError
 		}
 
-		return operation.(Operation).status, nil
+		return operation.(*Operation).status, nil
 	}
 	fileName := op.generateFileName(id)
-	ydOperationResult, err := op.ydArt.GetImage(operation.(Operation).ExternalId, fileName)
+	ydOperationResult, err := op.ydArt.GetImage(operation.(*Operation).ExternalId, fileName)
 	if err != nil {
 		return nil, err
 	}
 
 	if ydOperationResult {
-		completeOperation := operation.(Operation)
+		op.logger.Debug("Operation completed", "id", operation.(*Operation).Id, "fileName", fileName)
+		completeOperation := operation.(*Operation)
 		completeOperation.status = &OperStatus{Status: StatusDone, Error: ""}
 		completeOperation.FileName = fileName
 		op.completeOperations.SetDefault(id, completeOperation)
@@ -197,18 +198,19 @@ func (op *OperMngr) GetFileName(id string) (string, error) {
 		return "", resultError
 	}
 
-	return operation.(Operation).FileName, nil
+	return operation.(*Operation).FileName, nil
 
 }
 
 func (op *OperMngr) CheckPendingOperations() {
+	op.logger.Debug("Check pending operations")
 
 	count := op.pendingOperations.ItemCount()
 
 	ids := make([]string, 0, count+10)
 	for _, k := range op.pendingOperations.Items() {
-		op.logger.Debug("Pending operation", "operationId", k.Object.(Operation).Id)
-		ids = append(ids, k.Object.(Operation).Id)
+		op.logger.Debug("Pending operation", "operationId", k.Object.(*Operation).Id)
+		ids = append(ids, k.Object.(*Operation).Id)
 	}
 
 	for _, id := range ids {
@@ -226,5 +228,5 @@ func (op *OperMngr) generateId() string {
 
 func (op *OperMngr) generateFileName(id string) string {
 	unixSeconds := time.Now().Unix()
-	return filepath.Join(op.directoryPath, "f"+strconv.Itoa(int(unixSeconds)))
+	return filepath.Join(op.directoryPath, "f"+strconv.Itoa(int(unixSeconds))+".jpeg")
 }
