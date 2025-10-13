@@ -152,6 +152,11 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 	}
 
 	if response.Done {
+		if response.Error != "" {
+			resultError := fmt.Errorf("error from YandexArt: %s", response.Error)
+			ydArt.logger.Error("YandexArt error", "errorCode", response.ErrorCode, "error", response.Error, "detail", response.ErrorDetails)
+			return true, resultError
+		}
 		if response.Response.Image != "" {
 			err := processImage(filename, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
 			if err != nil {
@@ -165,8 +170,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 			return false, resultError
 		}
 	}
-	//TODO Надо как-то обработать возврат ошибки из Янедекса
-	//TODO Надо как-то обработать возврат ошибки
+	// Задача не завершена
 	return false, nil
 }
 
