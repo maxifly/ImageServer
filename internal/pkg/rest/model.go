@@ -39,8 +39,9 @@ type ErrorResponse struct {
 
 // StartResponse структура для исходящего ответа
 type StartResponse struct {
-	ID    string          `json:"id,omitempty"`
-	Error ErrorAttributes `json:"error,omitempty"`
+	ID     string             `json:"id,omitempty"`
+	Status opermanager.Status `json:"status"`
+	Error  ErrorAttributes    `json:"error,omitempty"`
 }
 
 // OperationStatusResponse структура для исходящего ответа

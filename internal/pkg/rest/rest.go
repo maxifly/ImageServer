@@ -75,7 +75,7 @@ func NewRest(port string,
 	}
 
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
-	router.HandleFunc("/operation/start", restObj.handleGetImage).Methods("POST")
+	router.HandleFunc("/operation/start", restObj.handleStartOperation).Methods("POST")
 	router.HandleFunc("/operation/status/{operationId}", restObj.handleGetOperationStatus).Methods("GET")
 	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
 	router.HandleFunc("/internal_function", restObj.handleInternalFunction).Methods("POST")
@@ -139,7 +139,6 @@ func (rest *Rest) handleInternalFunction(w http.ResponseWriter, r *http.Request)
 	// Отправляем успешный ответ
 	sendJSONResponse(w, http.StatusOK, map[string]bool{"success": true})
 }
-
 func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	rest.logger.Debug("Handling GET image")
 	vars := mux.Vars(r)
@@ -304,6 +303,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startResp.ID = operationId
+	startResp.Status = opermanager.StatusPending
 	sendJSONResponse(w, http.StatusOK, startResp)
 }
 
