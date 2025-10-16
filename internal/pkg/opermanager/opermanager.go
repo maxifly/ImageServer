@@ -125,7 +125,7 @@ func (op *OperMngr) startOldPictureOperation() (string, error) {
 			Error:  "",
 		},
 	}
-	op.completeOperations.SetDefault(operation.Id, operation)
+	op.completeOperations.SetDefault(operation.Id, &operation)
 	return operation.Id, nil
 
 }

@@ -10,7 +10,7 @@ type ImageResultResponse struct {
 type ImageResponse struct {
 	Id     string              `json:"id"`
 	Status opermanager.Status  `json:"status"`
-	Error  ErrorAttributes     `json:"error,omitempty"`
+	Error  *ErrorAttributes    `json:"error,omitempty"`
 	Result ImageResultResponse `json:"response,omitempty"`
 }
 

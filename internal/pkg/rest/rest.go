@@ -168,17 +168,22 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
 		return
 	}
-	var imageResponse = ImageResponse{Id: operationId, Status: status.Status}
+	var imageResponse = ImageResponse{Id: operationId, Status: status.Status, Error: nil}
 
 	if len(status.Error) > 0 {
 		errorAttrs.Code = "operationError"
 		errorAttrs.Message = "operation have error status"
 		errorAttrs.DevMessage = status.Error
-		imageResponse.Error = errorAttrs
+		imageResponse.Error = &errorAttrs
+	}
+	if status.Status == opermanager.StatusError {
+		sendJSONResponse(w, http.StatusUnprocessableEntity, imageResponse)
+		return
 	}
 
-	if status.Status != "done" {
+	if status.Status != opermanager.StatusDone {
 		sendJSONResponse(w, http.StatusOK, imageResponse)
+		return
 	}
 
 	fileName, err := rest.operMng.GetFileName(operationId)
