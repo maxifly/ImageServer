@@ -29,7 +29,8 @@ type ErrorAttributes struct {
 
 // StartRequest структура для входящего запроса
 type StartRequest struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // ErrorResponse структура для исходящего ответа

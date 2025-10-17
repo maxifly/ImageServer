@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -82,9 +83,9 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 	}
 	return &operMng
 }
-func (op *OperMngr) StartOperation(optype string) (string, error) {
+func (op *OperMngr) StartOperation(optype string, prompt string) (string, error) {
 	if optype == "ydart" {
-		return op.startYdArtOperation()
+		return op.startYdArtOperation(prompt)
 	} else if optype == "old" {
 		return op.startOldPictureOperation()
 	}
@@ -98,7 +99,7 @@ func (op *OperMngr) startAutoOperation() (string, error) {
 	if now.Sub(op.ydArtActioner.lastCallTime) >= op.ydArtActioner.threshold {
 		op.logger.Debug("Threshold")
 		// YdArt давно не вызывался
-		operation, err := op.startYdArtOperation()
+		operation, err := op.startYdArtOperation("")
 		if err != nil {
 			return "", err
 		}
@@ -130,9 +131,19 @@ func (op *OperMngr) startOldPictureOperation() (string, error) {
 
 }
 
-func (op *OperMngr) startYdArtOperation() (string, error) {
-	op.logger.Info("Start yart operation")
-	externalId, err := op.ydArt.Generate()
+func (op *OperMngr) startYdArtOperation(prompt string) (string, error) {
+	op.logger.Info("Start ydart operation")
+
+	var externalId string
+	var err error
+
+	if prompt != "" {
+		op.logger.Info("Start ydart operation with prompt")
+		externalId, err = op.ydArt.GenerateWithPrompt(strings.Trim(prompt, " "))
+	} else {
+		externalId, err = op.ydArt.Generate()
+	}
+
 	if err != nil {
 		resultError := fmt.Errorf("error YdArt generate %v", err)
 		op.logger.Error("Can not start operation", "error", resultError)

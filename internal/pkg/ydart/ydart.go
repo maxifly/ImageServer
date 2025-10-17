@@ -85,11 +85,17 @@ func NewYdArt(imageParameters *ImageParameters, logger *slog.Logger) *YdArt {
 		imageParameters: imageParameters,
 	}
 }
-
 func (ydArt *YdArt) Generate() (string, error) {
 	prompt, err := ydArt.getPrompt()
 	if err != nil {
 		return "", err
+	}
+	return ydArt.GenerateWithPrompt(prompt)
+}
+
+func (ydArt *YdArt) GenerateWithPrompt(prompt string) (string, error) {
+	if prompt == "" {
+		return "", fmt.Errorf("prompt is empty")
 	}
 
 	generatePromptMessage := generatePrompt{Text: prompt,
@@ -113,7 +119,7 @@ func (ydArt *YdArt) Generate() (string, error) {
 
 	url := fmt.Sprintf("%s/foundationModels/v1/imageGenerationAsync", CoreBaseURL)
 	var response getImageResponse
-	err = ydArt.innerRequest("POST", url, http.StatusOK, request, &response)
+	err := ydArt.innerRequest("POST", url, http.StatusOK, request, &response)
 
 	if err != nil {
 		resultError := fmt.Errorf("error generate image: %v", err)

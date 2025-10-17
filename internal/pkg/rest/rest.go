@@ -128,7 +128,7 @@ func (rest *Rest) handleInternalFunction(w http.ResponseWriter, r *http.Request)
 	// Вызываем внутреннюю функцию
 	//done, err := rest.ydArt.GetImage("fbvugu9865dhmqpvh0pl", newFilename)
 	//done, err := rest.ydArt.Generate()
-	rest.operMng.StartOperation("auto")
+	rest.operMng.StartOperation("auto", "")
 	rest.operMng.CheckPendingOperations()
 	//if err != nil {
 	//	rest.logger.Error("ERROR " + err.Error())
@@ -298,7 +298,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	operationId, err := rest.operMng.StartOperation(startReq.Type)
+	operationId, err := rest.operMng.StartOperation(startReq.Type, startReq.Prompt)
 	if err != nil {
 		errorAttrs.Code = "StartError"
 		errorAttrs.Message = "Can not start operation"
