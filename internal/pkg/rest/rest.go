@@ -229,6 +229,8 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	imageResult := ImageResultResponse{Image: encoded}
 	imageResponse.Result = imageResult
 
+	//sendJSONResponse(w, http.StatusOK, imageResponse)
+
 	// Кодируем структуру в JSON
 	jsonData, err := json.Marshal(imageResponse)
 	if err != nil {
@@ -238,7 +240,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 
 	// Получаем размер чанка из параметров запроса, по умолчанию 1024
 	chunkSizeParam := r.URL.Query().Get("chunk_size")
-	chunkSize := 256
+	chunkSize := 512
 	if chunkSizeParam != "" {
 		cs, err := strconv.Atoi(chunkSizeParam)
 		if err == nil && cs > 0 {
