@@ -60,7 +60,7 @@ func (dm *DirManager) ReadFiles() error {
 			if err != nil {
 				continue
 			}
-			fileList = append(dm.fileList, fileInfo{
+			fileList = append(fileList, fileInfo{
 				Name:    fullPath,
 				ModTime: info.ModTime(),
 			})
@@ -72,6 +72,7 @@ func (dm *DirManager) ReadFiles() error {
 	defer dm.mutex.Unlock()
 	dm.fileList = fileList
 	dm.fileMap = fileMap
+	dm.logger.Debug("Read files ", "fileAmount", len(dm.fileList))
 	return nil
 }
 
@@ -79,6 +80,8 @@ func (dm *DirManager) ReadFiles() error {
 func (dm *DirManager) GetRandomFile() string {
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
+
+	dm.logger.Debug("Get random file", "fileAmount", len(dm.fileList))
 
 	if len(dm.fileList) == 0 {
 		return ""
@@ -89,6 +92,7 @@ func (dm *DirManager) GetRandomFile() string {
 
 // AddFile добавляет новый файл в каталог и список, если он еще не существует
 func (dm *DirManager) AddFile(filename string) error {
+	dm.logger.Debug("Add file operation", "filename", filename)
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
 
@@ -97,18 +101,22 @@ func (dm *DirManager) AddFile(filename string) error {
 		return nil
 	}
 
-	fullPath := filepath.Join(dm.directoryPath, filename)
+	fullPath := filename
 	// Проверяем, существует ли файл в карте
 	if _, exists := dm.fileMap[fullPath]; exists {
 		return nil // Файл уже существует
 	}
 	// Если файл не существует, существует ли он в ОС
 	// Обновляем список и карту
+	dm.logger.Debug("Get file information", "filename", filename)
 	fileInformation, err := os.Stat(fullPath)
 	if err != nil {
 		// Файла нет или это какой-то странный файл. Не надо добавлять
+		dm.logger.Error("Get file information", "filename", filename, "error", err)
 		return nil
 	}
+
+	dm.logger.Debug("Add file", "filename", fullPath)
 	dm.fileList = append(dm.fileList, fileInfo{
 		Name:    fullPath,
 		ModTime: fileInformation.ModTime(),
@@ -116,8 +124,11 @@ func (dm *DirManager) AddFile(filename string) error {
 	dm.fileMap[fullPath] = struct{}{}
 	// Проверяем лимит и очищаем, если необходимо
 	if len(dm.fileList) > dm.limit {
+		//TODO Встаёт на mutex. Надо поменять.
+		dm.logger.Debug("Need cleanup")
 		dm.CleanUp()
 	}
+	dm.logger.Debug("Add file return", "filename", filename)
 	return nil
 }
 

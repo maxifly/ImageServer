@@ -197,6 +197,8 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rest.logger.Debug("Send file", "operatioId", operationId, "filename", fileName)
+
 	// Откроем файл и добавим его в ответ
 	// Открываем файл
 	//file, err := os.Open(fileName)

@@ -115,7 +115,7 @@ func (op *OperMngr) startAutoOperation() (string, error) {
 func (op *OperMngr) startOldPictureOperation() (string, error) {
 	op.logger.Info("Start old picture operation")
 	file := op.dirManager.GetRandomFile()
-
+	op.logger.Info("Start old picture operation", "file", file)
 	operation := Operation{
 		Id:         op.generateId(),
 		ExternalId: "dirManagerOperation",
@@ -127,6 +127,7 @@ func (op *OperMngr) startOldPictureOperation() (string, error) {
 		},
 	}
 	op.completeOperations.SetDefault(operation.Id, &operation)
+	op.logger.Info("Start old picture operation", "operationId", operation.Id, "file", operation.FileName)
 	return operation.Id, nil
 
 }
