@@ -21,17 +21,19 @@ type fileInfo struct {
 type DirManager struct {
 	directoryPath string
 	fileList      []fileInfo
-	limit         int
+	limitMin      int
+	limitMax      int
 	fileMap       map[string]struct{}
 	mutex         sync.Mutex
 	logger        *slog.Logger
 }
 
 // NewDirManager создает новый экземпляр DirManager
-func NewDirManager(path string, limit int, logger *slog.Logger) (*DirManager, error) {
+func NewDirManager(path string, limitMin int, limitMax int, logger *slog.Logger) (*DirManager, error) {
 	manager := &DirManager{
 		directoryPath: path,
-		limit:         limit,
+		limitMin:      limitMin,
+		limitMax:      limitMax,
 		logger:        logger,
 		fileList:      []fileInfo{},
 		fileMap:       make(map[string]struct{}),
@@ -123,10 +125,9 @@ func (dm *DirManager) AddFile(filename string) error {
 	})
 	dm.fileMap[fullPath] = struct{}{}
 	// Проверяем лимит и очищаем, если необходимо
-	if len(dm.fileList) > dm.limit {
-		//TODO Встаёт на mutex. Надо поменять.
+	if len(dm.fileList) > dm.limitMax {
 		dm.logger.Debug("Need cleanup")
-		dm.CleanUp()
+		dm.innerCleanUp()
 	}
 	dm.logger.Debug("Add file return", "filename", filename)
 	return nil
@@ -137,15 +138,21 @@ func (dm *DirManager) CleanUp() {
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
 
-	if len(dm.fileList) <= dm.limit {
+	dm.innerCleanUp()
+}
+
+func (dm *DirManager) innerCleanUp() {
+
+	if len(dm.fileList) <= dm.limitMax {
 		return
 	}
 	// Сортируем файлы по времени изменения
 	sort.Slice(dm.fileList, func(i, j int) bool {
 		return dm.fileList[i].ModTime.Before(dm.fileList[j].ModTime)
 	})
+
 	// Удаляем лишние файлы
-	for i := dm.limit; i < len(dm.fileList); i++ {
+	for i := dm.limitMin; i < len(dm.fileList); i++ {
 		// Удаляем из карты
 		delete(dm.fileMap, dm.fileList[i].Name)
 		// Удаляем файл
@@ -154,7 +161,11 @@ func (dm *DirManager) CleanUp() {
 			dm.logger.Warn("Error when delete file", "file", dm.fileList[i].Name, "error", err.Error())
 			continue
 		}
+		dm.logger.Debug("Cleanup", "i", i)
 	}
 	// Обновляем список файлов
-	dm.fileList = dm.fileList[:dm.limit]
+	dm.fileList = dm.fileList[:dm.limitMin]
+
+	dm.logger.Debug("Cleanup", "length", len(dm.fileList))
+
 }

@@ -15,9 +15,13 @@ import (
 	"time"
 )
 
-const FILE_PATH_OPTIONS = "/data/options.json"
-const checkPendingOperationScheduleDefault = "* * * * *"
-const scanImageFolderScheduleDefault = "0 0 * * *"
+const (
+	FILE_PATH_OPTIONS                    = "/data/options.json"
+	checkPendingOperationScheduleDefault = "* * * * *"
+	scanImageFolderScheduleDefault       = "0 0 * * *"
+	imageLimitMinDefault                 = 1000
+	imageLimitMaxDefault                 = 2000
+)
 
 type ImgSrv struct {
 	options          ApplOptions
@@ -32,7 +36,8 @@ type ImgSrv struct {
 type ApplOptions struct {
 	LogLevel                      string `json:"log_level"`
 	ImagePath                     string `json:"image_path"`
-	ImageLimit                    int    `json:"image_amount_limit"`
+	ImageLimitMin                 int    `json:"image_amount_min"`
+	ImageLimitMax                 int    `json:"image_amount_max"`
 	ImageGenerateThreshold        int    `json:"image_generate_threshold"`
 	CheckPendingOperationSchedule string `json:"check_pending_cron"`
 	ScanImageFolderSchedule       string `json:"scan_image_cron"`
@@ -128,7 +133,7 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	ydArt := ydart.NewYdArt(&imageParameters, logger)
-	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimit, logger)
+	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
 	if err != nil {
 		logger.Error("Error create DirManager %v", err)
 		panic(fmt.Sprintf("error create Rest %v", err))
@@ -217,6 +222,15 @@ func readOptions() (ApplOptions, error) {
 
 	if data.ScanImageFolderSchedule == "" {
 		data.ScanImageFolderSchedule = scanImageFolderScheduleDefault
+	}
+
+	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
+		data.ImageLimitMin = imageLimitMinDefault
+		data.ImageLimitMax = imageLimitMaxDefault
+	}
+
+	if data.ImageLimitMin >= data.ImageLimitMax {
+		panic("Option image_amount_min must be lower then image_amount_max")
 	}
 	return data, err
 }
