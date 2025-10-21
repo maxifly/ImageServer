@@ -42,7 +42,6 @@ type OperMngr struct {
 	idMutex       *IdMutex
 	ydArtActioner Actioner
 }
-
 type OperStatus struct {
 	Status Status
 	Error  string

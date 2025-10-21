@@ -1,10 +1,11 @@
 package appimageserver
 
 import (
-	"encoding/json"
+	//"encoding/json"
 	"fmt"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/natefinch/lumberjack"
+	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
@@ -17,11 +18,13 @@ import (
 )
 
 const (
-	FILE_PATH_OPTIONS                    = "/data/options.json"
+	FILE_PATH_OPTIONS                    = "/data/options.yml"
 	checkPendingOperationScheduleDefault = "* * * * *"
 	scanImageFolderScheduleDefault       = "0 0 * * *"
 	imageLimitMinDefault                 = 1000
 	imageLimitMaxDefault                 = 2000
+	imageHeightDefault                   = 480
+	imageWeightDefault                   = 320
 )
 
 type ImgSrv struct {
@@ -35,13 +38,15 @@ type ImgSrv struct {
 }
 
 type ApplOptions struct {
-	LogLevel                      string `json:"log_level"`
-	ImagePath                     string `json:"image_path"`
-	ImageLimitMin                 int    `json:"image_amount_min"`
-	ImageLimitMax                 int    `json:"image_amount_max"`
-	ImageGenerateThreshold        int    `json:"image_generate_threshold"`
-	CheckPendingOperationSchedule string `json:"check_pending_cron"`
-	ScanImageFolderSchedule       string `json:"scan_image_cron"`
+	LogLevel                      string `yaml:"log_level"`
+	ImagePath                     string `yaml:"image_path"`
+	ImageLimitMin                 int    `yaml:"image_amount_min"`
+	ImageLimitMax                 int    `yaml:"image_amount_max"`
+	ImageGenerateThreshold        int    `yaml:"image_generate_threshold"`
+	CheckPendingOperationSchedule string `yaml:"check_pending_cron"`
+	ScanImageFolderSchedule       string `yaml:"scan_image_cron"`
+	ImageWeight                   int    `yaml:"image_weight"`
+	ImageHeight                   int    `yaml:"image_height"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -92,6 +97,8 @@ func NewImgSrv(port string) *ImgSrv {
 	logger.Debug("This is a debug message", slog.String("detail", "additional info"))
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message", slog.String("error", "something went wrong"))
+
+	logger.Error("This is not error. Current options", "options", fmt.Sprintf("%+v", options))
 
 	//logFormat := log.Ldate | log.Ltime | log.Lshortfile
 
@@ -172,6 +179,11 @@ func (app *ImgSrv) Start() {
 		app.logger.Error("Error start dirManager", err)
 	}
 
+	err = app.operManager.Start()
+	if err != nil {
+		app.logger.Error("Error start operManager", err)
+	}
+
 	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.UTC),
 		gocron.WithLogger(
 			gocron.NewLogger(app.scheduleLogLevel),
@@ -225,7 +237,8 @@ func (app *ImgSrv) Stop() {
 func readOptions() (ApplOptions, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
 	var data ApplOptions
-	err := json.Unmarshal(plan, &data)
+	//err := json.Unmarshal(plan, &data)
+	err := yaml.Unmarshal(plan, &data)
 
 	if data.CheckPendingOperationSchedule == "" {
 		data.CheckPendingOperationSchedule = checkPendingOperationScheduleDefault
@@ -238,6 +251,13 @@ func readOptions() (ApplOptions, error) {
 	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
 		data.ImageLimitMin = imageLimitMinDefault
 		data.ImageLimitMax = imageLimitMaxDefault
+	}
+
+	if data.ImageHeight == 0 {
+		data.ImageHeight = imageHeightDefault
+	}
+	if data.ImageWeight == 0 {
+		data.ImageWeight = imageWeightDefault
 	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {
