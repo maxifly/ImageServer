@@ -58,11 +58,11 @@ func NewImgSrv(port string) *ImgSrv {
 
 	// Настройка обработчика для записи в файл с ротацией
 	fileLogger := &lumberjack.Logger{
-		Filename:   "app.log", // Имя файла логов
-		MaxSize:    100,       // Максимальный размер файла в мегабайтах
-		MaxBackups: 3,         // Максимальное количество старых файлов для хранения
-		MaxAge:     28,        // Максимальный возраст файла в днях
-		Compress:   true,      // Сжимать ли старые файлы в формате gzip
+		Filename:   "/log/app.log", // Имя файла логов
+		MaxSize:    100,            // Максимальный размер файла в мегабайтах
+		MaxBackups: 3,              // Максимальное количество старых файлов для хранения
+		MaxAge:     28,             // Максимальный возраст файла в днях
+		Compress:   true,           // Сжимать ли старые файлы в формате gzip
 	}
 
 	var logLevel = slog.LevelInfo
@@ -99,42 +99,6 @@ func NewImgSrv(port string) *ImgSrv {
 	logger.Error("This is an error message", slog.String("error", "something went wrong"))
 
 	logger.Error("This is not error. Current options", "options", fmt.Sprintf("%+v", options))
-
-	//logFormat := log.Ldate | log.Ltime | log.Lshortfile
-
-	//debugLog := log.New(mylogger.NewNullWriter(), "DEBUG\t", logFormat)
-	//infoLog := log.New(mylogger.NewNullWriter(), "INFO\t", logFormat)
-	//errorLog := log.New(os.Stderr, "ERROR\t", logFormat)
-	//isDebudDisable := true
-
-	//scheduleLogLevel := gocron.LogLevelWarn
-
-	// Test log messages
-
-	//options, err := readOptions()
-	//if err != nil {
-	//	panic(fmt.Sprintf("Can not read Options: %v", err))
-	//}
-	//
-	//if options.LogLevel == "DEBUG" {
-	//	debugLog = log.New(os.Stdout, "DEBUG\t", logFormat)
-	//	infoLog = log.New(os.Stdout, "INFO\t", logFormat)
-	//	isDebudDisable = false
-	//
-	//}
-	//if options.LogLevel == "INFO" {
-	//	infoLog = log.New(os.Stdout, "INFO\t", logFormat)
-	//}
-	//
-	//debugLog.Println("hello")
-	//infoLog.Println("hello")
-	//errorLog.Println("hello")
-	//
-	//// Инициализируем новую структуру с зависимостями приложения.
-	//logger := mylogger.New(errorLog, infoLog, debugLog)
-	//if isDebudDisable {
-	//	logger.DisableDebug()
-	//}
 
 	imageParameters := ydart.ImageParameters{Height: 480,
 		Weight: 320,

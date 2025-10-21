@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  image_server:
+    build: .
+    container_name: image_server
+    ports:
+      - "8099:8090"
+    volumes:
+      - /home/maxim/ImageServerFiles/data:/data
+      - /home/maxim/ImageServerFiles/images:/images
+      - /home/maxim/ImageServerFiles/log:/log
+    restart: always
