@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   image_server:
     build: .
     container_name: image_server
     ports:
-      - "8099:8090"
+      - "8099:8099"
     volumes:
       - /home/maxim/ImageServerFiles/data:/data
       - /home/maxim/ImageServerFiles/images:/images
