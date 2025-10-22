@@ -232,7 +232,7 @@ func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, 
 	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.options.ApiKey))
 	req.Header.Set("Accept", "application/json") // Ожидание ответа в формате JSON
 
-	ydArt.logger.Debug("request", "request", req)
+	// ydArt.logger.Debug("request", "request", req)
 
 	// Выполняем запрос
 	resp, err := ydArt.httpClient.Do(req)
