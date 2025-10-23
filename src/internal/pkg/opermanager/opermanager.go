@@ -2,8 +2,10 @@ package opermanager
 
 import (
 	"fmt"
+	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
 	"log/slog"
+	"math/rand"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,9 +40,9 @@ type OperMngr struct {
 	logger             *slog.Logger
 	imageProviders     []*ImageProvider
 	//ydArt              *ydart.YdArt
-	dirManager    *dirmanager.DirManager
-	idMutex       *IdMutex
-	ydArtActioner Actioner
+	dirManager *dirmanager.DirManager
+	idMutex    *IdMutex
+	actioner   *actioner.Actioner
 }
 type OperStatus struct {
 	Status Status
@@ -54,11 +56,6 @@ type Operation struct {
 	FileName   string
 	Type       generatorType
 	status     *OperStatus
-}
-
-type Actioner struct {
-	lastCallTime time.Time
-	threshold    time.Duration
 }
 
 func NewOperMngr(directoryPath string, thresholdMinutes int,
@@ -75,8 +72,7 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 		dirManager:         dirManager,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
-		ydArtActioner: Actioner{lastCallTime: time.Time{},
-			threshold: time.Duration(thresholdMinutes) * time.Minute},
+		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
 	}
 	return &operMng
 }
@@ -94,7 +90,9 @@ func (op *OperMngr) Start() error {
 
 func (op *OperMngr) StartOperation(optype string, prompt string) (string, error) {
 	if optype == "ydart" {
-		return op.startProviderOperation(prompt)
+		op.logger.Info("Start direct provider operation")
+		provider := op.getImageProvider()
+		return op.startProviderOperation(provider, prompt, true)
 	} else if optype == "old" {
 		return op.startOldPictureOperation()
 	}
@@ -103,23 +101,58 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 }
 
 func (op *OperMngr) getImageProvider() *ImageProvider {
-	provider := op.imageProviders[0]
-	op.logger.Debug("Choose provider", "provider", (*provider).GetImageProviderForImageServerName())
-	return provider
+	if len(op.imageProviders) == 1 {
+		op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
+		return op.imageProviders[0]
+	}
+
+	idx := rand.Intn(len(op.imageProviders))
+	op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
+
+	return op.imageProviders[idx]
+}
+
+func (op *OperMngr) chooseImageProvider() *ImageProvider {
+	// Перебираем провайдеров которые могут принять задание
+	var readyProviders []int
+	for idx, pr := range op.imageProviders {
+		if (*pr).IsReadyForRequest() {
+			readyProviders = append(readyProviders, idx)
+		}
+	}
+
+	if len(readyProviders) == 0 {
+		return nil
+	} else if len(readyProviders) == 1 {
+		op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[0]]).GetImageProviderForImageServerName())
+		return op.imageProviders[readyProviders[0]]
+	}
+
+	idx := rand.Intn(len(readyProviders))
+	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[idx]]).GetImageProviderForImageServerName())
+
+	return op.imageProviders[idx]
 }
 
 func (op *OperMngr) startAutoOperation() (string, error) {
 	op.logger.Info("Start auto operation")
 	now := time.Now()
-	if now.Sub(op.ydArtActioner.lastCallTime) >= op.ydArtActioner.threshold {
+	if op.actioner.ThresholdOut(now) {
 		op.logger.Debug("Threshold")
-		// YdArt давно не вызывался
-		operation, err := op.startProviderOperation("")
+		// Внешний провайдер давно не вызывался
+		provider := op.chooseImageProvider()
+
+		if provider == nil {
+			op.logger.Debug("Ready provider is nil")
+			// Вызываем менеджер старых изображений
+			return op.startOldPictureOperation()
+		}
+		operation, err := op.startProviderOperation(provider, "", false)
 		if err != nil {
 			return "", err
 		}
 		// Обновляем время последнего вызова
-		op.ydArtActioner.lastCallTime = now
+		op.actioner.SetLastCallTime(now)
 		return operation, nil
 	} else {
 		// Вызываем менеджер старых изображений
@@ -147,19 +180,17 @@ func (op *OperMngr) startOldPictureOperation() (string, error) {
 
 }
 
-func (op *OperMngr) startProviderOperation(prompt string) (string, error) {
-	op.logger.Info("Start ydart operation")
+func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt string, isDirectCall bool) (string, error) {
+	op.logger.Info("Start ydart operation", "isDirectCall", isDirectCall)
 
 	var externalId string
 	var err error
 
-	provider := op.getImageProvider()
-
 	if prompt != "" {
-		op.logger.Info("Start ydart operation with prompt")
-		externalId, err = (*provider).GenerateWithPrompt(strings.Trim(prompt, " "))
+		op.logger.Debug("Start ydart operation with prompt")
+		externalId, err = (*provider).GenerateWithPrompt(strings.Trim(prompt, " "), isDirectCall)
 	} else {
-		externalId, err = (*provider).Generate()
+		externalId, err = (*provider).Generate(isDirectCall)
 	}
 
 	if err != nil {

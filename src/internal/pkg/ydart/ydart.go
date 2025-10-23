@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"golang.org/x/image/draw"
 	"image"
+	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/promptmanager"
 	"strconv"
 	"strings"
+	"time"
 
 	//"image/draw"
 	"image/jpeg"
@@ -28,16 +30,23 @@ type ImageParameters struct {
 	Height int
 	Weight int
 }
-type YdArtOption struct {
+type YdArtSecretOption struct {
 	FolderId string `json:"folder_id"`
 	ApiKey   string `json:"api_key"`
 }
+
+type YdArtOptions struct {
+	ImageGenerateThreshold int `yaml:"image_generate_threshold"`
+}
+
 type YdArt struct {
 	httpClient      *http.Client
 	logger          *slog.Logger
-	options         *YdArtOption
+	soptions        *YdArtSecretOption
+	options         *YdArtOptions
 	imageParameters *ImageParameters
 	promptManager   *promptmanager.PromptManager
+	actioner        *actioner.Actioner
 }
 
 type getImageResponse struct {
@@ -75,8 +84,8 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(imageParameters *ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger) *YdArt {
-	options, err := readOptions()
+func NewYdArt(imageParameters *ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
+	soptions, err := readSecretOptions()
 	if err != nil {
 		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
 	}
@@ -84,9 +93,11 @@ func NewYdArt(imageParameters *ImageParameters, promptManager *promptmanager.Pro
 	return &YdArt{
 		httpClient:      http.DefaultClient,
 		logger:          logger,
-		options:         &options,
+		soptions:        &soptions,
+		options:         options,
 		imageParameters: imageParameters,
 		promptManager:   promptManager,
+		actioner:        actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 	}
 }
 
@@ -94,15 +105,15 @@ func (ydArt *YdArt) GetImageProviderForImageServerName() string {
 	return "YandexArt"
 }
 
-func (ydArt *YdArt) Generate() (string, error) {
+func (ydArt *YdArt) Generate(isDirectCall bool) (string, error) {
 	prompt, err := ydArt.getPrompt()
 	if err != nil {
 		return "", err
 	}
-	return ydArt.GenerateWithPrompt(prompt)
+	return ydArt.GenerateWithPrompt(prompt, isDirectCall)
 }
 
-func (ydArt *YdArt) GenerateWithPrompt(prompt string) (string, error) {
+func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is empty")
 	}
@@ -121,7 +132,7 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string) (string, error) {
 	}
 
 	request := generateRequest{
-		ModelUri:          "art://" + ydArt.options.FolderId + "/yandex-art/latest",
+		ModelUri:          "art://" + ydArt.soptions.FolderId + "/yandex-art/latest",
 		Messages:          []*generatePrompt{&generatePromptMessage},
 		GenerationOptions: &generationOpt,
 	}
@@ -136,6 +147,10 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string) (string, error) {
 		return "", resultError
 	}
 
+	if !isDirectCall {
+		ydArt.actioner.SetLastCallTime(time.Now())
+	}
+	
 	if response.Error != "" {
 		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
 		ydArt.logger.Error(resultError.Error())
@@ -150,23 +165,6 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string) (string, error) {
 
 	ydArt.logger.Debug("YandexArt operation id", "id", response.Id)
 	return response.Id, nil
-}
-
-func (ydArt *YdArt) getPrompt() (string, error) {
-	prompt, err := ydArt.promptManager.GetRandomPrompt()
-	if err != nil {
-		ydArt.logger.Error("Error when get prompt", "error", err.Error())
-		ydArt.logger.Debug("Return default prompt", "prompt", "test")
-		return "test", err
-	}
-
-	result := prompt.Prompt
-	if prompt.Negative != nil && strings.Trim(*prompt.Negative, "") != "" {
-		result = result + ". Игнорировать следующее: " + *prompt.Negative
-	}
-
-	ydArt.logger.Debug("result prompt", "prompt", result)
-	return result, nil
 }
 
 func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) {
@@ -202,6 +200,27 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 	return false, nil
 }
 
+func (ydArt *YdArt) IsReadyForRequest() bool {
+	return ydArt.actioner.ThresholdOut(time.Now())
+}
+
+func (ydArt *YdArt) getPrompt() (string, error) {
+	prompt, err := ydArt.promptManager.GetRandomPrompt()
+	if err != nil {
+		ydArt.logger.Error("Error when get prompt", "error", err.Error())
+		ydArt.logger.Debug("Return default prompt", "prompt", "test")
+		return "test", err
+	}
+
+	result := prompt.Prompt
+	if prompt.Negative != nil && strings.Trim(*prompt.Negative, "") != "" {
+		result = result + ". Игнорировать следующее: " + *prompt.Negative
+	}
+
+	ydArt.logger.Debug("result prompt", "prompt", result)
+	return result, nil
+}
+
 func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, requestBody interface{}, result interface{}) error {
 	ydArt.logger.Debug("Execute get request", "url", url)
 
@@ -229,7 +248,7 @@ func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, 
 	}
 
 	// Устанавливаем заголовок авторизации
-	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.options.ApiKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.soptions.ApiKey))
 	req.Header.Set("Accept", "application/json") // Ожидание ответа в формате JSON
 
 	// ydArt.logger.Debug("request", "request", req)
@@ -315,9 +334,9 @@ func processImage(fileName string, imageBase64 string, width, height int) error 
 	return nil
 }
 
-func readOptions() (YdArtOption, error) {
+func readSecretOptions() (YdArtSecretOption, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
-	var data YdArtOption
+	var data YdArtSecretOption
 	err := json.Unmarshal(plan, &data)
 	return data, err
 }

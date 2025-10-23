@@ -1,8 +1,8 @@
 package appimageserver
 
 import (
-	//"encoding/json"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
@@ -37,16 +37,20 @@ type ImgSrv struct {
 	scheduleLogLevel gocron.LogLevel
 }
 
+type ProvidersOptions struct {
+	YdArtOptions *ydart.YdArtOptions `yaml:"ydArt"`
+}
 type ApplOptions struct {
-	LogLevel                      string `yaml:"log_level"`
-	ImagePath                     string `yaml:"image_path"`
-	ImageLimitMin                 int    `yaml:"image_amount_min"`
-	ImageLimitMax                 int    `yaml:"image_amount_max"`
-	ImageGenerateThreshold        int    `yaml:"image_generate_threshold"`
-	CheckPendingOperationSchedule string `yaml:"check_pending_cron"`
-	ScanImageFolderSchedule       string `yaml:"scan_image_cron"`
-	ImageWeight                   int    `yaml:"image_weight"`
-	ImageHeight                   int    `yaml:"image_height"`
+	LogLevel                      string            `yaml:"log_level"`
+	ImagePath                     string            `yaml:"image_path"`
+	ImageLimitMin                 int               `yaml:"image_amount_min"`
+	ImageLimitMax                 int               `yaml:"image_amount_max"`
+	ImageGenerateThreshold        int               `yaml:"image_generate_threshold"`
+	CheckPendingOperationSchedule string            `yaml:"check_pending_cron"`
+	ScanImageFolderSchedule       string            `yaml:"scan_image_cron"`
+	ImageWeight                   int               `yaml:"image_weight"`
+	ImageHeight                   int               `yaml:"image_height"`
+	ProvidersOptions              *ProvidersOptions `yaml:"providers"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -98,7 +102,7 @@ func NewImgSrv(port string) *ImgSrv {
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message", slog.String("error", "something went wrong"))
 
-	logger.Error("This is not error. Current options", "options", fmt.Sprintf("%+v", options))
+	logger.Error("This is not error. Current options", "options", spew.Sprintf("%+v", options))
 
 	imageParameters := ydart.ImageParameters{Height: 480,
 		Weight: 320,
@@ -110,7 +114,7 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create PromptManager %v", err))
 	}
 
-	ydArt := ydart.NewYdArt(&imageParameters, promptManager, logger)
+	ydArt := ydart.NewYdArt(&imageParameters, promptManager, logger, options.ProvidersOptions.YdArtOptions)
 	iYdArt := (opermanager.ImageProvider)(ydArt)
 
 	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
