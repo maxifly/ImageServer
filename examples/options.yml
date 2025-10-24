@@ -3,11 +3,25 @@ image_path: "/images"
 image_amount_min: 5000
 image_amount_max: 6000
 image_generate_threshold: 2
-image_weight: 320
-image_height: 480
+iframe_image_parameters:
+  image_weight: 320
+  image_height: 480
 check_pending_cron: "* * * * *"
 scan_image_cron: "0 0 * * *"
-
+sleep_time:
+  - time_range:
+     start_time: "12:00"
+     end_time: "13:00"
+    black_image_mode: false
+  - time_range:
+      start_time: "00:00"
+      end_time: "08:00"
+    black_image_mode: true
+night:
+  time_range:
+    start_time: "00:00"
+    end_time: "08:00"
+  black_image_mode: true
 providers:
   ydArt:
     image_generate_threshold: 10
