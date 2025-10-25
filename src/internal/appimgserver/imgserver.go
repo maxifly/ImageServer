@@ -55,7 +55,6 @@ type ApplOptions struct {
 	ScanImageFolderSchedule       string                   `yaml:"scan_image_cron"`
 	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
 	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
-	Night                         *opermanager.SleepTime   `yaml:"night"`
 	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
 }
 
@@ -136,7 +135,7 @@ func NewImgSrv(port string) *ImgSrv {
 
 	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold,
 		&imageParameters,
-		options.Night, dirManager, logger)
+		options.SleepTimes, dirManager, logger)
 	operMng.AddImageProvider(&iYdArt)
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager)
@@ -236,10 +235,6 @@ func readOptions() (ApplOptions, error) {
 
 	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {
 		data.IframeImageParameters = &IframeImageParameters{ImageWeight: imageWeightDefault, ImageHeight: imageHeightDefault}
-	}
-
-	if data.Night == nil {
-		data.Night = &opermanager.SleepTime{TimeRange: &opermanager.TimeRange{Start: "21:00", End: "09:00"}}
 	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {

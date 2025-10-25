@@ -17,11 +17,6 @@ sleep_time:
       start_time: "00:00"
       end_time: "08:00"
     black_image_mode: true
-night:
-  time_range:
-    start_time: "00:00"
-    end_time: "08:00"
-  black_image_mode: true
 providers:
   ydArt:
     image_generate_threshold: 10
