@@ -20,3 +20,10 @@ sleep_time:
 providers:
   ydArt:
     image_generate_threshold: 10
+    sleep_time:
+      - time_range:
+          start_time: "12:00"
+          end_time: "13:00"
+      - time_range:
+          start_time: "00:00"
+          end_time: "08:00"
