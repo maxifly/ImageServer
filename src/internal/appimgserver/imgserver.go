@@ -40,17 +40,23 @@ type ImgSrv struct {
 type ProvidersOptions struct {
 	YdArtOptions *ydart.YdArtOptions `yaml:"ydArt"`
 }
+type IframeImageParameters struct {
+	ImageWeight int `yaml:"image_weight"`
+	ImageHeight int `yaml:"image_height"`
+}
+
 type ApplOptions struct {
-	LogLevel                      string            `yaml:"log_level"`
-	ImagePath                     string            `yaml:"image_path"`
-	ImageLimitMin                 int               `yaml:"image_amount_min"`
-	ImageLimitMax                 int               `yaml:"image_amount_max"`
-	ImageGenerateThreshold        int               `yaml:"image_generate_threshold"`
-	CheckPendingOperationSchedule string            `yaml:"check_pending_cron"`
-	ScanImageFolderSchedule       string            `yaml:"scan_image_cron"`
-	ImageWeight                   int               `yaml:"image_weight"`
-	ImageHeight                   int               `yaml:"image_height"`
-	ProvidersOptions              *ProvidersOptions `yaml:"providers"`
+	LogLevel                      string                   `yaml:"log_level"`
+	ImagePath                     string                   `yaml:"image_path"`
+	ImageLimitMin                 int                      `yaml:"image_amount_min"`
+	ImageLimitMax                 int                      `yaml:"image_amount_max"`
+	ImageGenerateThreshold        int                      `yaml:"image_generate_threshold"`
+	CheckPendingOperationSchedule string                   `yaml:"check_pending_cron"`
+	ScanImageFolderSchedule       string                   `yaml:"scan_image_cron"`
+	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
+	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
+	Night                         *opermanager.SleepTime   `yaml:"night"`
+	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -104,8 +110,8 @@ func NewImgSrv(port string) *ImgSrv {
 
 	logger.Error("This is not error. Current options", "options", spew.Sprintf("%+v", options))
 
-	imageParameters := ydart.ImageParameters{Height: 480,
-		Weight: 320,
+	imageParameters := opermanager.ImageParameters{Height: options.IframeImageParameters.ImageHeight,
+		Weight: options.IframeImageParameters.ImageWeight,
 	}
 
 	promptManager, err := promptmanager.NewPromptManager(logger)
@@ -114,8 +120,13 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create PromptManager %v", err))
 	}
 
-	ydArt := ydart.NewYdArt(&imageParameters, promptManager, logger, options.ProvidersOptions.YdArtOptions)
+	ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
 	iYdArt := (opermanager.ImageProvider)(ydArt)
+	err = iYdArt.SetImageParameters(&imageParameters)
+	if err != nil {
+		logger.Error("Error setting image parameters: %v", err)
+		panic(fmt.Sprintf("error setting image parameters: %v", err))
+	}
 
 	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
 	if err != nil {
@@ -123,7 +134,9 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create DirManager %v", err))
 	}
 
-	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold, dirManager, logger)
+	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold,
+		&imageParameters,
+		options.Night, dirManager, logger)
 	operMng.AddImageProvider(&iYdArt)
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager)
@@ -221,11 +234,12 @@ func readOptions() (ApplOptions, error) {
 		data.ImageLimitMax = imageLimitMaxDefault
 	}
 
-	if data.ImageHeight == 0 {
-		data.ImageHeight = imageHeightDefault
+	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {
+		data.IframeImageParameters = &IframeImageParameters{ImageWeight: imageWeightDefault, ImageHeight: imageHeightDefault}
 	}
-	if data.ImageWeight == 0 {
-		data.ImageWeight = imageWeightDefault
+
+	if data.Night == nil {
+		data.Night = &opermanager.SleepTime{TimeRange: &opermanager.TimeRange{Start: "21:00", End: "09:00"}}
 	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {

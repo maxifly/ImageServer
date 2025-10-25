@@ -8,6 +8,7 @@ import (
 	"golang.org/x/image/draw"
 	"image"
 	"imgserver/internal/pkg/actioner"
+	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
 	"strconv"
 	"strings"
@@ -26,10 +27,6 @@ const (
 	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
 )
 
-type ImageParameters struct {
-	Height int
-	Weight int
-}
 type YdArtSecretOption struct {
 	FolderId string `json:"folder_id"`
 	ApiKey   string `json:"api_key"`
@@ -44,7 +41,7 @@ type YdArt struct {
 	logger          *slog.Logger
 	soptions        *YdArtSecretOption
 	options         *YdArtOptions
-	imageParameters *ImageParameters
+	imageParameters *opermanager.ImageParameters
 	promptManager   *promptmanager.PromptManager
 	actioner        *actioner.Actioner
 }
@@ -84,23 +81,26 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(imageParameters *ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
+func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
 	soptions, err := readSecretOptions()
 	if err != nil {
 		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
 	}
 	//logger.Debug("Options ", "options", options)
 	return &YdArt{
-		httpClient:      http.DefaultClient,
-		logger:          logger,
-		soptions:        &soptions,
-		options:         options,
-		imageParameters: imageParameters,
-		promptManager:   promptManager,
-		actioner:        actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
+		httpClient:    http.DefaultClient,
+		logger:        logger,
+		soptions:      &soptions,
+		options:       options,
+		promptManager: promptManager,
+		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 	}
 }
 
+func (ydArt *YdArt) SetImageParameters(parameters *opermanager.ImageParameters) error {
+	ydArt.imageParameters = parameters
+	return nil
+}
 func (ydArt *YdArt) GetImageProviderForImageServerName() string {
 	return "YandexArt"
 }
@@ -150,7 +150,7 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string
 	if !isDirectCall {
 		ydArt.actioner.SetLastCallTime(time.Now())
 	}
-	
+
 	if response.Error != "" {
 		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
 		ydArt.logger.Error(resultError.Error())
