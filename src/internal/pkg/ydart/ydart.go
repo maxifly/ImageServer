@@ -10,6 +10,7 @@ import (
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/timerange"
 	"strconv"
 	"strings"
 	"time"
@@ -27,13 +28,20 @@ const (
 	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
 )
 
+var _ opermanager.ImageProvider = (*YdArt)(nil)
+
 type YdArtSecretOption struct {
 	FolderId string `json:"folder_id"`
 	ApiKey   string `json:"api_key"`
 }
 
+type YdArtSleepTime struct {
+	TimeRange *timerange.TimeRange `yaml:"time_range"`
+}
+
 type YdArtOptions struct {
-	ImageGenerateThreshold int `yaml:"image_generate_threshold"`
+	ImageGenerateThreshold int              `yaml:"image_generate_threshold"`
+	SleepTimes             []YdArtSleepTime `yaml:"sleep_time"`
 }
 
 type YdArt struct {

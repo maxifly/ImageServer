@@ -6,6 +6,7 @@ import (
 	"image/jpeg"
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/timerange"
 	"log/slog"
 	"math/rand"
 	"os"
@@ -39,8 +40,8 @@ const (
 )
 
 type SleepTime struct {
-	TimeRange      *TimeRange `yaml:"time_range"`
-	BlackImageMode bool       `yaml:"black_image_mode"`
+	TimeRange      *timerange.TimeRange `yaml:"time_range"`
+	BlackImageMode bool                 `yaml:"black_image_mode"`
 }
 
 type OperMngr struct {
