@@ -1,4 +1,4 @@
-package opermanager
+package timerange
 
 import (
 	"fmt"

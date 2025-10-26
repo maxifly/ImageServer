@@ -10,6 +10,7 @@ import (
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/timerange"
 	"strconv"
 	"strings"
 	"time"
@@ -27,13 +28,20 @@ const (
 	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
 )
 
+var _ opermanager.ImageProvider = (*YdArt)(nil)
+
 type YdArtSecretOption struct {
 	FolderId string `json:"folder_id"`
 	ApiKey   string `json:"api_key"`
 }
 
+type YdArtSleepTime struct {
+	TimeRange *timerange.TimeRange `yaml:"time_range"`
+}
+
 type YdArtOptions struct {
-	ImageGenerateThreshold int `yaml:"image_generate_threshold"`
+	ImageGenerateThreshold int              `yaml:"image_generate_threshold"`
+	SleepTimes             []YdArtSleepTime `yaml:"sleep_time"`
 }
 
 type YdArt struct {
@@ -201,7 +209,28 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 }
 
 func (ydArt *YdArt) IsReadyForRequest() bool {
-	return ydArt.actioner.ThresholdOut(time.Now())
+	if !ydArt.actioner.ThresholdOut(time.Now()) {
+		// Провайдер вызывался недавно. Он не готов к новому вызову.
+		return false
+	}
+
+	// Проверяем не наступило ли время сна
+	if len(ydArt.options.SleepTimes) > 0 {
+		now := time.Now()
+		for _, st := range ydArt.options.SleepTimes {
+			//ydArt.logger.Debug("Get time range", "time", st.TimeRange)
+			inclusive, err := st.TimeRange.IsWithinRangeInclusive(now)
+			if err != nil {
+				ydArt.logger.Error("Get time range error", "error", err)
+			}
+			if inclusive {
+				return false
+			}
+
+		}
+	}
+
+	return true
 }
 
 func (ydArt *YdArt) getPrompt() (string, error) {
