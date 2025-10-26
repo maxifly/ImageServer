@@ -4,6 +4,7 @@
 
 - Add threshold for providers.  [#1](https://github.com/maxifly/ImageServer/issues/1)
 - Add sleep mode.  [#6](https://github.com/maxifly/ImageServer/issues/6)
+- Add metrics.  [#3](https://github.com/maxifly/ImageServer/issues/3)
 
 
 ## 1.1

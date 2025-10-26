@@ -26,6 +26,7 @@ import (
 const (
 	FILE_PATH_OPTIONS        = "/data/ydart-options.json"
 	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
+	ProviderCode             = "YandexArt"
 )
 
 var _ opermanager.ImageProvider = (*YdArt)(nil)
@@ -111,6 +112,9 @@ func (ydArt *YdArt) SetImageParameters(parameters *opermanager.ImageParameters) 
 }
 func (ydArt *YdArt) GetImageProviderForImageServerName() string {
 	return "YandexArt"
+}
+func (ydArt *YdArt) GetImageProviderCode() string {
+	return ProviderCode
 }
 
 func (ydArt *YdArt) Generate(isDirectCall bool) (string, error) {

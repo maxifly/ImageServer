@@ -6,6 +6,7 @@ import (
 	"image/jpeg"
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/timerange"
 	"log/slog"
 	"math/rand"
@@ -39,6 +40,12 @@ const (
 	StatusError   Status = "error"
 )
 
+const (
+	METRIC_TEMPLATE_OPERATION_START  = "OPERATION_START_"
+	METRIC_TEMPLATE_OPERATION_STATUS = "OPERATION_STATUS_"
+	METRIC_TEMPLATE_IMAGE_GET        = "IMAGE_GET_"
+)
+
 type SleepTime struct {
 	TimeRange      *timerange.TimeRange `yaml:"time_range"`
 	BlackImageMode bool                 `yaml:"black_image_mode"`
@@ -56,6 +63,7 @@ type OperMngr struct {
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
 	imageParameters *ImageParameters
+	metrics         *metrics.AppMetrics
 }
 type OperStatus struct {
 	Status Status
@@ -75,6 +83,7 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 	parameters *ImageParameters,
 	sleepTimes []*SleepTime,
 	dirManager *dirmanager.DirManager,
+	metrics *metrics.AppMetrics,
 	logger *slog.Logger) *OperMngr {
 
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
@@ -90,6 +99,7 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
 		sleepTimes:         sleepTimes,
 		imageParameters:    parameters,
+		metrics:            metrics,
 	}
 	return &operMng
 }
@@ -118,6 +128,7 @@ func (op *OperMngr) Start() error {
 }
 
 func (op *OperMngr) StartOperation(optype string, prompt string) (string, error) {
+	//op.metrics.TotalRequests.Inc(1)
 	if optype == "ydart" {
 		op.logger.Info("Start direct provider operation")
 		provider := op.getImageProvider()
@@ -236,23 +247,28 @@ func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture 
 }
 
 func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt string, isDirectCall bool) (string, error) {
-	op.logger.Info("Start ydart operation", "isDirectCall", isDirectCall)
+	op.logger.Info("Start provider operation", "isDirectCall", isDirectCall)
+
+	providerMetric := op.metrics.GetRequestTypeMetricsSafe(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
 
 	var externalId string
 	var err error
 
 	if prompt != "" {
-		op.logger.Debug("Start ydart operation with prompt")
+		op.logger.Debug("Start provider operation with prompt")
 		externalId, err = (*provider).GenerateWithPrompt(strings.Trim(prompt, " "), isDirectCall)
 	} else {
 		externalId, err = (*provider).Generate(isDirectCall)
 	}
 
 	if err != nil {
-		resultError := fmt.Errorf("error YdArt generate %v", err)
+		resultError := fmt.Errorf("error provider generate %v", err)
 		op.logger.Error("Can not start operation", "error", resultError)
+		providerMetric.IncrementErrorRequest()
 		return "", resultError
 	}
+
+	providerMetric.IncrementSuccessRequest()
 
 	operation := Operation{
 		Id:         op.generateId(),
