@@ -7,6 +7,7 @@ import (
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
@@ -35,6 +36,7 @@ type ImgSrv struct {
 	operManager      *opermanager.OperMngr
 	scheduler        gocron.Scheduler
 	scheduleLogLevel gocron.LogLevel
+	metrics          *metrics.AppMetrics
 }
 
 type ProvidersOptions struct {
@@ -113,6 +115,8 @@ func NewImgSrv(port string) *ImgSrv {
 		Weight: options.IframeImageParameters.ImageWeight,
 	}
 
+	appMetrics := metrics.NewAppMetrics()
+
 	promptManager, err := promptmanager.NewPromptManager(logger)
 	if err != nil {
 		logger.Error("Error create PromptManager %v", err)
@@ -135,10 +139,10 @@ func NewImgSrv(port string) *ImgSrv {
 
 	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold,
 		&imageParameters,
-		options.SleepTimes, dirManager, logger)
+		options.SleepTimes, dirManager, appMetrics, logger)
 	operMng.AddImageProvider(&iYdArt)
 
-	restObj, err := rest.NewRest(port, logger, operMng, promptManager)
+	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
 		panic(fmt.Sprintf("error create Rest %v", err))
@@ -151,9 +155,11 @@ func NewImgSrv(port string) *ImgSrv {
 		dirManager:       dirManager,
 		operManager:      operMng,
 		scheduleLogLevel: scheduleLogLevel,
+		metrics:          appMetrics,
 	}
 }
 func (app *ImgSrv) Start() {
+	app.metrics.Start()
 	err := app.dirManager.Start()
 	if err != nil {
 		app.logger.Error("Error start dirManager", err)
@@ -163,6 +169,8 @@ func (app *ImgSrv) Start() {
 	if err != nil {
 		app.logger.Error("Error start operManager", err)
 	}
+
+	metrics.StartMetricsLogging(app.logger, 60*time.Minute)
 
 	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.UTC),
 		gocron.WithLogger(

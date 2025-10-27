@@ -7,6 +7,7 @@ type ImageParameters struct {
 
 type ImageProvider interface {
 	GetImageProviderForImageServerName() string
+	GetImageProviderCode() string
 	Generate(isDirectCall bool) (string, error)
 	GenerateWithPrompt(prompt string, isDirectCall bool) (string, error)
 	GetImage(operationId string, filename string) (bool, error)
