@@ -26,6 +26,7 @@ const (
 	imageLimitMaxDefault                 = 2000
 	imageHeightDefault                   = 480
 	imageWeightDefault                   = 320
+	promptsAmountDefault                 = 10
 )
 
 type ImgSrv struct {
@@ -58,6 +59,7 @@ type ApplOptions struct {
 	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
 	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
 	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
+	PromptsAmount                 int                      `yaml:"prompts_amount"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -117,7 +119,7 @@ func NewImgSrv(port string) *ImgSrv {
 
 	appMetrics := metrics.NewAppMetrics()
 
-	promptManager, err := promptmanager.NewPromptManager(logger)
+	promptManager, err := promptmanager.NewPromptManager(options.PromptsAmount, logger)
 	if err != nil {
 		logger.Error("Error create PromptManager %v", err)
 		panic(fmt.Sprintf("error create PromptManager %v", err))
@@ -239,6 +241,10 @@ func readOptions() (ApplOptions, error) {
 	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
 		data.ImageLimitMin = imageLimitMinDefault
 		data.ImageLimitMax = imageLimitMaxDefault
+	}
+
+	if data.PromptsAmount == 0 {
+		data.PromptsAmount = promptsAmountDefault
 	}
 
 	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {

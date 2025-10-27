@@ -345,7 +345,7 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	promptValue := promptmanager.PromptValue{Prompt: promptReq.Prompt}
+	promptValue := promptmanager.Prompt{Prompt: promptReq.Prompt, Placeholders: nil}
 	if promptReq.Negative != nil {
 		promptValue.Negative = promptReq.Negative
 	}
