@@ -9,6 +9,7 @@
 - Add metrics.  [#3](https://github.com/maxifly/ImageServer/issues/3)
 - Add sleep mode.  [#6](https://github.com/maxifly/ImageServer/issues/6)
 - Add daily metrics. [#10](https://github.com/maxifly/ImageServer/issues/10)
+- Application use local timezone [#11](https://github.com/maxifly/ImageServer/issues/11)
 
 
 ## 1.1

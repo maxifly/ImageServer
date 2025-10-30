@@ -110,8 +110,9 @@ func NewImgSrv(port string) *ImgSrv {
 	logger.Debug("This is a debug message", slog.String("detail", "additional info"))
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message", slog.String("error", "something went wrong"))
-
 	logger.Error("This is not error. Current options", "options", spew.Sprintf("%+v", options))
+
+	logTimezoneConfiguration(logger)
 
 	imageParameters := opermanager.ImageParameters{Height: options.IframeImageParameters.ImageHeight,
 		Weight: options.IframeImageParameters.ImageWeight,
@@ -255,4 +256,65 @@ func readOptions() (ApplOptions, error) {
 		panic("Option image_amount_min must be lower then image_amount_max")
 	}
 	return data, err
+}
+
+func logTimezoneConfiguration(logger *slog.Logger) {
+	logger.Info("=== CHECKING THE TIME CONFIGURATION ===")
+
+	info := getTimezoneInfo()
+
+	// Основная информация
+	logger.Info(fmt.Sprintf("= The final timezone: %s", info.SystemTZ))
+	logger.Info(fmt.Sprintf("= Current time: %s", info.LocalTime))
+	logger.Info(fmt.Sprintf("= UTC     time: %s", info.UTCTime))
+	logger.Info(fmt.Sprintf("= Offset from UTC: %s", info.Offset))
+
+	// Источник настроек
+	logger.Info(fmt.Sprintf("= Sources of settings:"))
+
+	if info.EnvironmentTZ != "" {
+		logger.Info(fmt.Sprintf("=     TZ variable: %s", info.EnvironmentTZ))
+	} else {
+		logger.Info(fmt.Sprintf("=     TZ variable: not set"))
+	}
+
+	if info.HasLocaltime {
+		logger.Info(fmt.Sprintf("=     /etc/localtime: mounted from the host"))
+	} else {
+		logger.Info(fmt.Sprintf("=     /etc/localtime: unavailable (using fallback)"))
+	}
+
+	logger.Info("=====================================")
+}
+
+type TimezoneInfo struct {
+	EnvironmentTZ string
+	SystemTZ      string
+	LocalTime     string
+	UTCTime       string
+	Offset        string
+	HasLocaltime  bool
+	HasTZVariable bool
+}
+
+func getTimezoneInfo() TimezoneInfo {
+	now := time.Now()
+
+	info := TimezoneInfo{
+		EnvironmentTZ: os.Getenv("TZ"),
+		SystemTZ:      now.Location().String(),
+		LocalTime:     now.Format("2006-01-02 15:04:05 MST"),
+		UTCTime:       now.UTC().Format("2006-01-02 15:04:05 MST"),
+		Offset:        now.Format("-0700"),
+		HasTZVariable: os.Getenv("TZ") != "",
+	}
+
+	// Проверяем наличие /etc/localtime
+	if _, err := os.Stat("/etc/localtime"); err == nil {
+		info.HasLocaltime = true
+	} else {
+		info.HasLocaltime = false
+	}
+
+	return info
 }
