@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
 
 const (
@@ -64,6 +65,10 @@ var indexTemplate = `
     <p>Images error sent: {{.ImagesSentError}}</p>
     <p>Images sent success rate (req per hour): {{.ImagesSentSuccessRate}}</p>
     <p>Images sent error rate (req per hour): {{.ImagesSentErrorRate}}</p>
+    </br>
+    <p>Yandex art yesterday success: {{.YandexYesterday}}</p>
+    <p>Yandex art today success: {{.YandexToday}}</p>
+
     </br>
     <p>Yandex art success: {{.YandexTotal}}</p>
     <p>Yandex art error: {{.YandexError}}</p>
@@ -141,6 +146,9 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 		YandexError:       ydArtMetric.Errors.Count(),
 		YandexSuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
 		YandexErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
+
+		YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+		YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
 	})
 
 	if err != nil {

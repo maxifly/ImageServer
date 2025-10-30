@@ -8,7 +8,7 @@
 - Add template prompts [#2](https://github.com/maxifly/ImageServer/issues/2)
 - Add metrics.  [#3](https://github.com/maxifly/ImageServer/issues/3)
 - Add sleep mode.  [#6](https://github.com/maxifly/ImageServer/issues/6)
-
+- Add daily metrics. [#10](https://github.com/maxifly/ImageServer/issues/10)
 
 
 ## 1.1

@@ -30,6 +30,9 @@ type StatusResponse struct {
 	YandexError       int64   `json:"yandex_error"`
 	YandexSuccessRate float64 `json:"yandex_success_rate"`
 	YandexErrorRate   float64 `json:"yandex_error_rate"`
+
+	YandexToday     int64 `json:"yandex_today"`
+	YandexYesterday int64 `json:"yandex_yesterday"`
 }
 
 // Error структура для ошибок
