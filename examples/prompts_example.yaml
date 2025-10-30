@@ -1,0 +1,23 @@
+prompts:
+    - idx: 1
+      prompt: test
+      negative: blablabla blabla
+    - idx: 2
+      prompt: test test [[CoLoRs]] blabla
+    - idx: 3
+      prompt: test test [[CoLoRs]] blabla
+      placeholders:
+        CoLoRs:
+          - красный
+          - голубой
+          - зелёный презелёный
+global_placeholders:
+    CoLoRs:
+        - красный
+        - голубой
+        - зелёный презелёный
+    Fruits:
+        - яблоко
+        - спелое яблоко
+        - orange
+

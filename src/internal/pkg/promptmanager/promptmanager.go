@@ -1,11 +1,13 @@
 package promptmanager
 
 import (
-	"encoding/json"
 	"fmt"
+	"gopkg.in/yaml.v3"
+	"imgserver/internal/pkg/templater"
 	"log/slog"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -22,39 +24,57 @@ func (p PromptValue) String() string {
 	return fmt.Sprintf("Prompt: %s, Negative: %s", p.Prompt, negative)
 }
 
-type PromptMap map[int]PromptValue
+type PromptMap map[int]Prompt
 
 type PromptManager struct {
-	prompts PromptMap
-	maxKeys int
-	logger  *slog.Logger
-	mutex   sync.Mutex
+	prompts            PromptMap
+	globalPlaceholders map[string][]string
+	templater          *templater.TemplateProcessor
+	maxKeys            int
+	logger             *slog.Logger
+	mutex              sync.Mutex
 }
 
 type Prompt struct {
-	Idx      int     `json:"idx"`
-	Prompt   string  `json:"prompt"`
-	Negative *string `json:"negative,omitempty"` // Обратите внимание на указатель и `omitempty`
+	Idx          int                 `yaml:"idx"`
+	Prompt       string              `yaml:"prompt"`
+	Negative     *string             `yaml:"negative,omitempty"` // Обратите внимание на указатель и `omitempty`
+	Placeholders map[string][]string `yaml:"placeholders,omitempty"`
 }
 
 type PromptsData struct {
-	Prompts []Prompt `json:"prompts"`
+	Prompts            []Prompt            `yaml:"prompts"`
+	GlobalPlaceholders map[string][]string `yaml:"global_placeholders,omitempty"`
 }
 
 const (
-	FILE_PATH_OPTIONS = "/data/prompts.json"
+	FILE_PATH_OPTIONS         = "/data/prompts.yaml"
+	FILE_PATH_EXAMPLE_OPTIONS = "/data/prompts_example.yaml"
 )
 
-func NewPromptManager(logger *slog.Logger) (*PromptManager, error) {
-	pm := &PromptManager{logger: logger, maxKeys: 10}
+func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) {
 
-	promptsData, err := pm.readJSON()
+	pm := &PromptManager{logger: logger, maxKeys: maxKeys, templater: templater.NewTemplateProcessor()}
+
+	// Создать файл с примером
+	pm.writeYaml(FILE_PATH_EXAMPLE_OPTIONS, createExamplePrompts())
+
+	// Прочитать данные промптов
+	promptsData, err := pm.readYaml()
 	if err != nil {
 		return nil, err
 	}
 
 	promptsToMap := pm.convertPromptsToMap(promptsData.Prompts)
 	pm.prompts = promptsToMap
+	pm.globalPlaceholders = promptsData.GlobalPlaceholders
+
+	if !pm.validatePrompts(promptsData.Prompts) {
+		pm.logger.Warn("Invalid prompts found")
+	} else {
+		pm.logger.Info("Prompts successfully validated")
+	}
+
 	pm.logger.Debug("Read saved prompts", "count", len(pm.prompts))
 	return pm, nil
 }
@@ -72,7 +92,7 @@ func (pm *PromptManager) GetRandomPrompt() (PromptValue, error) {
 	}
 
 	if keysCount == 1 {
-		return pm.prompts[1], nil
+		return pm.convertToPromptValue(pm.prompts[1]), nil
 	}
 
 	for i := 0; i < maxRetries; i++ {
@@ -81,20 +101,24 @@ func (pm *PromptManager) GetRandomPrompt() (PromptValue, error) {
 
 		value, exists := pm.prompts[randomIndex]
 		if exists {
-			return value, nil
+			return pm.convertToPromptValue(value), nil
 		}
 	}
 	pm.logger.Error("Failed to select an existing item after the maximum number of attempts", "maxAttempts", maxRetries)
 	return PromptValue{}, fmt.Errorf("failed to select an existing item after the maximum number of attempts")
 }
 
-func (pm *PromptManager) GetPrompts() PromptMap {
-	pm.mutex.Lock()
-	defer pm.mutex.Unlock()
-	return copyPromptMap(pm.prompts)
+func (pm *PromptManager) convertToPromptValue(prompt Prompt) PromptValue {
+	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
+		return PromptValue{Prompt: prompt.Prompt, Negative: prompt.Negative}
+	}
+
+	positive1 := pm.templater.ReplacePlaceholders(prompt.Prompt, prompt.Placeholders)
+	positive := pm.templater.ReplacePlaceholders(positive1, pm.globalPlaceholders)
+	return PromptValue{Prompt: positive, Negative: prompt.Negative}
 }
 
-func (pm *PromptManager) AddNewPrompt(newPrompt PromptValue) error {
+func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) error {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
@@ -150,7 +174,7 @@ func (pm *PromptManager) AddNewPrompt(newPrompt PromptValue) error {
 
 	pm.logger.Debug("Prompts count", "count", len(pm.prompts))
 	prompts := convertMapToPrompts(pm.prompts)
-	err := pm.writeJSON(&PromptsData{Prompts: prompts})
+	err := pm.writeYaml(FILE_PATH_OPTIONS, &PromptsData{Prompts: prompts, GlobalPlaceholders: pm.globalPlaceholders})
 	if err != nil {
 		pm.logger.Error("can not save new prompts into file", err.Error())
 		return err
@@ -158,31 +182,31 @@ func (pm *PromptManager) AddNewPrompt(newPrompt PromptValue) error {
 	return nil
 }
 
-func (pm *PromptManager) readJSON() (*PromptsData, error) {
+func (pm *PromptManager) readYaml() (*PromptsData, error) {
 	// Проверяем, существует ли файл
 	if _, err := os.Stat(FILE_PATH_OPTIONS); os.IsNotExist(err) {
 		// Если файл не существует, вариант по умолчанию
 		promptData := createDefaultPrompts()
-		pm.writeJSON(promptData)
+		pm.writeYaml(FILE_PATH_OPTIONS, promptData)
 		return promptData, nil
 	}
 
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
 	var d PromptsData
-	err := json.Unmarshal(plan, &d)
+	err := yaml.Unmarshal(plan, &d)
 	if err != nil {
 		return nil, err
 	}
 	return &d, nil
 }
 
-func (pm *PromptManager) writeJSON(d *PromptsData) error {
-	jsonData, err := json.MarshalIndent(d, "", "    ")
+func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
+	jsonData, err := yaml.Marshal(d)
 	if err != nil {
 		pm.logger.Error("Can not marshal", err)
 		return fmt.Errorf("can not marshal: %w", err)
 	}
-	filename := FILE_PATH_OPTIONS
+
 	// Проверяем, существует ли файл
 	fileExists := true
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
@@ -212,7 +236,7 @@ func (pm *PromptManager) writeJSON(d *PromptsData) error {
 	}
 
 	if !fileExists {
-		pm.logger.Debug("Crate new prompts file", "filename", filename)
+		pm.logger.Debug("Create new prompts file", "filename", filename)
 		fmt.Printf("Файл '%s' создан.\n", filename)
 	} else {
 		pm.logger.Debug("Rewrite prompts file", "filename", filename)
@@ -222,22 +246,19 @@ func (pm *PromptManager) writeJSON(d *PromptsData) error {
 }
 
 func (pm *PromptManager) convertPromptsToMap(prompts []Prompt) PromptMap {
-	promptMap := make(map[int]PromptValue)
+	promptMap := make(map[int]Prompt)
 	for _, prompt := range prompts {
 		if _, exists := promptMap[prompt.Idx]; exists {
 			pm.logger.Error("Not unique idx", "idx", prompt.Idx)
 			continue
 		}
-		promptMap[prompt.Idx] = PromptValue{
-			Prompt:   prompt.Prompt,
-			Negative: prompt.Negative,
-		}
+		promptMap[prompt.Idx] = prompt
 	}
 	pm.logger.Debug("Converted", "count", len(promptMap))
 	return promptMap
 }
 
-func (pm *PromptManager) existsPromptValue(prompt PromptValue) bool {
+func (pm *PromptManager) existsPromptValue(prompt Prompt) bool {
 	for _, value := range pm.prompts {
 		// Сравниваем Prompt и Negative
 		if value.Prompt == prompt.Prompt {
@@ -248,6 +269,33 @@ func (pm *PromptManager) existsPromptValue(prompt PromptValue) bool {
 		}
 	}
 	return false
+}
+
+func (pm *PromptManager) validatePrompts(prompts []Prompt) bool {
+	result := true
+
+	for _, prompt := range prompts {
+		if !pm.validatePrompt(prompt) {
+			result = false
+		}
+	}
+	return result
+}
+
+func (pm *PromptManager) validatePrompt(prompt Prompt) bool {
+	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
+		return true
+	}
+
+	placeholders := unionMaps(pm.globalPlaceholders, prompt.Placeholders)
+	result, missing := pm.templater.ValidatePlaceholders(prompt.Prompt, placeholders)
+
+	if !result {
+		pm.logger.Warn("Prompt with template not valid", "prompt idx", prompt.Idx, "invalid placeholders", strings.Join(missing, ", "))
+		return false
+	}
+
+	return true
 }
 
 func convertMapToPrompts(promptMap PromptMap) []Prompt {
@@ -263,7 +311,7 @@ func convertMapToPrompts(promptMap PromptMap) []Prompt {
 }
 
 func copyPromptMap(originalMap PromptMap) PromptMap {
-	copiedMap := make(map[int]PromptValue, len(originalMap))
+	copiedMap := make(map[int]Prompt, len(originalMap))
 	for key, value := range originalMap {
 		// Копируем каждое значение в новую карту
 		copiedMap[key] = value
@@ -272,7 +320,23 @@ func copyPromptMap(originalMap PromptMap) PromptMap {
 }
 
 func createDefaultPrompts() *PromptsData {
+	return &PromptsData{
+		Prompts: []Prompt{
+			{
+				Idx:    1,
+				Prompt: "test",
+			},
+		},
+	}
+}
+
+// createExamplePrompts Создать файл с примером
+func createExamplePrompts() *PromptsData {
 	defaultPrompt := "test"
+	placeholders := make(map[string][]string)
+	placeholders["Fruits"] = []string{"яблоко", "спелое яблоко", "orange"}
+	placeholders["CoLoRs"] = []string{"красный", "голубой", "зелёный презелёный"}
+
 	return &PromptsData{
 		Prompts: []Prompt{
 			{
@@ -280,5 +344,35 @@ func createDefaultPrompts() *PromptsData {
 				Prompt: defaultPrompt,
 			},
 		},
+
+		GlobalPlaceholders: placeholders,
 	}
+}
+
+func unionMaps(firstMap, secondMap map[string][]string) map[string][]string {
+	// Создаем независимую копию первой карты
+	copiedMap := make(map[string][]string)
+
+	// Копируем все ключи и значения из первой карты
+	if firstMap != nil {
+		for key, values := range firstMap {
+			// Создаем независимую копию слайса
+			copiedValues := make([]string, len(values))
+			copy(copiedValues, values)
+			copiedMap[key] = copiedValues
+		}
+	}
+
+	// Добавляем все значения из второй карты
+	if secondMap != nil {
+		for key, values := range secondMap {
+			// Создаем независимую копию слайса
+			copiedValues := make([]string, len(values))
+			copy(copiedValues, values)
+			copiedMap[key] = copiedValues
+		}
+	}
+
+	return copiedMap
+
 }

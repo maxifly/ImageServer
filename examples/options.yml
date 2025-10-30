@@ -8,6 +8,7 @@ iframe_image_parameters:
   image_height: 480
 check_pending_cron: "* * * * *"
 scan_image_cron: "0 0 * * *"
+prompts_amount: 10
 sleep_time:
   - time_range:
      start_time: "12:00"

@@ -246,6 +246,7 @@ func (ydArt *YdArt) getPrompt() (string, error) {
 	}
 
 	result := prompt.Prompt
+
 	if prompt.Negative != nil && strings.Trim(*prompt.Negative, "") != "" {
 		result = result + ". Игнорировать следующее: " + *prompt.Negative
 	}
