@@ -265,10 +265,12 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt strin
 		resultError := fmt.Errorf("error provider generate %v", err)
 		op.logger.Error("Can not start operation", "error", resultError)
 		providerMetric.IncrementErrorRequest()
+
 		return "", resultError
 	}
 
 	providerMetric.IncrementSuccessRequest()
+	op.metrics.IncrementDaily(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
 
 	operation := Operation{
 		Id:         op.generateId(),
