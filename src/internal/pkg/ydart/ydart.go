@@ -130,6 +130,8 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string
 		return "", fmt.Errorf("prompt is empty")
 	}
 
+	ydArt.logger.Debug("generate with prompt", "prompt", prompt, "isDirect", isDirectCall)
+
 	generatePromptMessage := generatePrompt{Text: prompt,
 		Weight: 1}
 
