@@ -16,8 +16,23 @@ type ImageResponse struct {
 
 // StatusResponse структура для отображения статуса
 type StatusResponse struct {
-	TotalRequests int `json:"total_requests"`
-	ImagesSent    int `json:"images_sent"`
+	TotalRequests            int64   `json:"total_requests"`
+	TotalRequestsError       int64   `json:"total_requests_errors"`
+	TotalRequestsSuccessRate float64 `json:"total_requests_success_rate"`
+	TotalRequestsErrorRate   float64 `json:"total_requests_errors_rate"`
+
+	ImagesSentTotal       int64   `json:"images_sent_total"`
+	ImagesSentError       int64   `json:"images_sent_error"`
+	ImagesSentSuccessRate float64 `json:"images_sent_success_rate"`
+	ImagesSentErrorRate   float64 `json:"images_sent_error_rate"`
+
+	YandexTotal       int64   `json:"yandex_total"`
+	YandexError       int64   `json:"yandex_error"`
+	YandexSuccessRate float64 `json:"yandex_success_rate"`
+	YandexErrorRate   float64 `json:"yandex_error_rate"`
+
+	YandexToday     int64 `json:"yandex_today"`
+	YandexYesterday int64 `json:"yandex_yesterday"`
 }
 
 // Error структура для ошибок

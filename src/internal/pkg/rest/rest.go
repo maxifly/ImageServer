@@ -5,12 +5,24 @@ import (
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"html/template"
+	"imgserver/internal/pkg/helpers"
+	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
+)
+
+const (
+	METRIC_ALL_WEB          = "WEB_ALL"
+	METRIC_OPERATION_START  = "OPERATION_START"
+	METRIC_OPERATION_STATUS = "OPERATION_STATUS"
+	METRIC_NEW_PROMPT       = "NEW_PROMPT"
+	METRIC_IMAGE_GET        = "IMAGE_GET"
 )
 
 // Шаблон для веб-страницы
@@ -45,7 +57,25 @@ var indexTemplate = `
 <body>
     <h1>Image Server Status</h1>
     <p>Total Requests: {{.TotalRequests}}</p>
-    <p>Images Sent: {{.ImagesSent}}</p>
+    <p>Total error requests: {{.TotalRequestsError}}</p>
+    <p>Total requests success rate (req per hour): {{.TotalRequestsSuccessRate}}</p>
+    <p>Total requests error rate (req per hour): {{.TotalRequestsErrorRate}}</p>
+    </br>
+    <p>Images Sent: {{.ImagesSentTotal}}</p>
+    <p>Images error sent: {{.ImagesSentError}}</p>
+    <p>Images sent success rate (req per hour): {{.ImagesSentSuccessRate}}</p>
+    <p>Images sent error rate (req per hour): {{.ImagesSentErrorRate}}</p>
+    </br>
+    <p>Yandex art yesterday success: {{.YandexYesterday}}</p>
+    <p>Yandex art today success: {{.YandexToday}}</p>
+
+    </br>
+    <p>Yandex art success: {{.YandexTotal}}</p>
+    <p>Yandex art error: {{.YandexError}}</p>
+    <p>Yandex art success rate (req per hour): {{.YandexSuccessRate}}</p>
+    <p>Yandex art error rate (req per hour): {{.YandexErrorRate}}</p>
+
+
     <button onclick="sendRequest()">Execute Internal Function</button>
 </body>
 </html>
@@ -57,12 +87,14 @@ type Rest struct {
 	operMng       *opermanager.OperMngr
 	port          string
 	promptManager *promptmanager.PromptManager
+	metrics       *metrics.AppMetrics
 }
 
 func NewRest(port string,
 	logger *slog.Logger,
 	operMng *opermanager.OperMngr,
 	promptManager *promptmanager.PromptManager,
+	metrics *metrics.AppMetrics,
 ) (*Rest, error) {
 
 	router := mux.NewRouter()
@@ -72,6 +104,7 @@ func NewRest(port string,
 		logger:        logger,
 		operMng:       operMng,
 		promptManager: promptManager,
+		metrics:       metrics,
 	}
 
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
@@ -95,15 +128,29 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//// Блокируем доступ к счетчикам
-	//mu.Lock()
-	//defer mu.Unlock()
-
 	// Выполняем шаблон
+
+	ydArtMetric := rest.metrics.GetRequestTypeMetricsSafe(opermanager.METRIC_TEMPLATE_OPERATION_START + ydart.ProviderCode)
+
 	err = tmpl.Execute(w, StatusResponse{
-		TotalRequests: 0,
-		ImagesSent:    0,
+		TotalRequests:            rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Total.Count(),
+		TotalRequestsError:       rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Errors.Count(),
+		TotalRequestsSuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).SuccessRate.Rate15() * 3600.),
+		TotalRequestsErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).ErrorRate.Rate15() * 3600.),
+		ImagesSentTotal:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Total.Count(),
+		ImagesSentError:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Errors.Count(),
+		ImagesSentSuccessRate:    helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).SuccessRate.Rate15() * 3600.),
+		ImagesSentErrorRate:      helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).ErrorRate.Rate15() * 3600.),
+
+		YandexTotal:       ydArtMetric.Total.Count(),
+		YandexError:       ydArtMetric.Errors.Count(),
+		YandexSuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
+		YandexErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
+
+		YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+		YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
 	})
+
 	if err != nil {
 		http.Error(w, "Error executing template", http.StatusInternalServerError)
 		return
@@ -123,6 +170,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		errorResp.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, errorResp)
 		rest.logger.Error(errorAttrs.Message)
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
@@ -137,6 +185,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		errorResp := ErrorResponse{errorAttrs}
 		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 	var imageResponse = ImageResponse{Id: operationId, Status: status.Status, Error: nil}
@@ -149,11 +198,13 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if status.Status == opermanager.StatusError {
 		sendJSONResponse(w, http.StatusUnprocessableEntity, imageResponse)
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
 	if status.Status != opermanager.StatusDone {
 		sendJSONResponse(w, http.StatusOK, imageResponse)
+		rest.incrRequestMetric(METRIC_IMAGE_GET, false)
 		return
 	}
 
@@ -165,6 +216,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		errorResp := ErrorResponse{errorAttrs}
 		sendJSONResponse(w, http.StatusUnprocessableEntity, errorResp)
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
@@ -177,6 +229,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Error reading file", http.StatusInternalServerError)
 		}
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
@@ -192,6 +245,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	jsonData, err := json.Marshal(imageResponse)
 	if err != nil {
 		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
@@ -209,6 +263,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
 
@@ -226,6 +281,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		w.Write(chunk)
 		flusher.Flush()
 	}
+	rest.incrRequestMetric(METRIC_IMAGE_GET, false)
 }
 
 // Функция для обработки POST-запросов к /operation/start
@@ -246,12 +302,14 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 		startResp.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, startResp)
 		rest.logger.Error(errorAttrs.Message)
+		rest.incrRequestMetric(METRIC_OPERATION_START, true)
 		return
 	}
 
 	// Проверяем тип операции
 	if startReq.Type != "auto" && startReq.Type != "ydart" && startReq.Type != "old" {
 		http.Error(w, "Invalid operation type", http.StatusBadRequest)
+		rest.incrRequestMetric(METRIC_OPERATION_START, true)
 		return
 	}
 
@@ -263,11 +321,13 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 		startResp.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, startResp)
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		rest.incrRequestMetric(METRIC_OPERATION_START, true)
 		return
 	}
 
 	startResp.ID = operationId
 	startResp.Status = opermanager.StatusPending
+	rest.incrRequestMetric(METRIC_OPERATION_START, false)
 	sendJSONResponse(w, http.StatusOK, startResp)
 }
 
@@ -289,10 +349,11 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		promptResp.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, promptResp)
 		rest.logger.Error(errorAttrs.Message)
+		rest.incrRequestMetric(METRIC_NEW_PROMPT, true)
 		return
 	}
 
-	promptValue := promptmanager.PromptValue{Prompt: promptReq.Prompt}
+	promptValue := promptmanager.Prompt{Prompt: promptReq.Prompt, Placeholders: nil}
 	if promptReq.Negative != nil {
 		promptValue.Negative = promptReq.Negative
 	}
@@ -305,9 +366,11 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		promptResp.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, promptResp)
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		rest.incrRequestMetric(METRIC_NEW_PROMPT, true)
 		return
 	}
 
+	rest.incrRequestMetric(METRIC_NEW_PROMPT, false)
 	promptResp.Status = opermanager.StatusDone
 	sendJSONResponse(w, http.StatusCreated, promptResp)
 }
@@ -325,6 +388,7 @@ func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Reques
 		statusResponse.Error = errorAttrs
 		sendJSONResponse(w, http.StatusBadRequest, statusResponse)
 		rest.logger.Error(errorAttrs.Message)
+		rest.incrRequestMetric(METRIC_OPERATION_STATUS, true)
 		return
 	}
 
@@ -340,6 +404,7 @@ func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Reques
 		statusResponse.Error = errorAttrs
 		sendJSONResponse(w, http.StatusUnprocessableEntity, statusResponse)
 		rest.logger.Error(errorAttrs.Message, slog.String("error", errorAttrs.DevMessage))
+		rest.incrRequestMetric(METRIC_OPERATION_STATUS, true)
 		return
 	}
 
@@ -352,6 +417,7 @@ func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Reques
 		errorAttrs.DevMessage = status.Error
 		statusResponse.Error = errorAttrs
 	}
+	rest.incrRequestMetric(METRIC_OPERATION_STATUS, false)
 	sendJSONResponse(w, http.StatusOK, statusResponse)
 }
 
@@ -372,4 +438,15 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 
 func (rest *Rest) Start() error {
 	return http.ListenAndServe(":"+rest.port, rest.router)
+}
+
+func (rest *Rest) incrRequestMetric(metricType string, isError bool) {
+	if isError {
+		rest.metrics.IncrementErrorRequest(METRIC_ALL_WEB)
+		rest.metrics.IncrementErrorRequest(metricType)
+	} else {
+		rest.metrics.IncrementSuccessRequest(METRIC_ALL_WEB)
+		rest.metrics.IncrementSuccessRequest(metricType)
+	}
+
 }

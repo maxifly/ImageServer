@@ -5,7 +5,11 @@ services:
     ports:
       - "8099:8099"
     volumes:
+      - /etc/localtime:/etc/localtime:ro
       - /home/maxim/ImageServerFiles/data:/data
       - /home/maxim/ImageServerFiles/images:/images
       - /home/maxim/ImageServerFiles/log:/log
     restart: always
+
+    environment:
+      - TZ=Europe/Moscow

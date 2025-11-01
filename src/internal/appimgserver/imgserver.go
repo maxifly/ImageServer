@@ -1,12 +1,13 @@
 package appimageserver
 
 import (
-	//"encoding/json"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
@@ -25,6 +26,7 @@ const (
 	imageLimitMaxDefault                 = 2000
 	imageHeightDefault                   = 480
 	imageWeightDefault                   = 320
+	promptsAmountDefault                 = 10
 )
 
 type ImgSrv struct {
@@ -35,18 +37,29 @@ type ImgSrv struct {
 	operManager      *opermanager.OperMngr
 	scheduler        gocron.Scheduler
 	scheduleLogLevel gocron.LogLevel
+	metrics          *metrics.AppMetrics
+}
+
+type ProvidersOptions struct {
+	YdArtOptions *ydart.YdArtOptions `yaml:"ydArt"`
+}
+type IframeImageParameters struct {
+	ImageWeight int `yaml:"image_weight"`
+	ImageHeight int `yaml:"image_height"`
 }
 
 type ApplOptions struct {
-	LogLevel                      string `yaml:"log_level"`
-	ImagePath                     string `yaml:"image_path"`
-	ImageLimitMin                 int    `yaml:"image_amount_min"`
-	ImageLimitMax                 int    `yaml:"image_amount_max"`
-	ImageGenerateThreshold        int    `yaml:"image_generate_threshold"`
-	CheckPendingOperationSchedule string `yaml:"check_pending_cron"`
-	ScanImageFolderSchedule       string `yaml:"scan_image_cron"`
-	ImageWeight                   int    `yaml:"image_weight"`
-	ImageHeight                   int    `yaml:"image_height"`
+	LogLevel                      string                   `yaml:"log_level"`
+	ImagePath                     string                   `yaml:"image_path"`
+	ImageLimitMin                 int                      `yaml:"image_amount_min"`
+	ImageLimitMax                 int                      `yaml:"image_amount_max"`
+	ImageGenerateThreshold        int                      `yaml:"image_generate_threshold"`
+	CheckPendingOperationSchedule string                   `yaml:"check_pending_cron"`
+	ScanImageFolderSchedule       string                   `yaml:"scan_image_cron"`
+	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
+	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
+	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
+	PromptsAmount                 int                      `yaml:"prompts_amount"`
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -97,21 +110,29 @@ func NewImgSrv(port string) *ImgSrv {
 	logger.Debug("This is a debug message", slog.String("detail", "additional info"))
 	logger.Warn("This is a warning message")
 	logger.Error("This is an error message", slog.String("error", "something went wrong"))
+	logger.Error("This is not error. Current options", "options", spew.Sprintf("%+v", options))
 
-	logger.Error("This is not error. Current options", "options", fmt.Sprintf("%+v", options))
+	logTimezoneConfiguration(logger)
 
-	imageParameters := ydart.ImageParameters{Height: 480,
-		Weight: 320,
+	imageParameters := opermanager.ImageParameters{Height: options.IframeImageParameters.ImageHeight,
+		Weight: options.IframeImageParameters.ImageWeight,
 	}
 
-	promptManager, err := promptmanager.NewPromptManager(logger)
+	appMetrics := metrics.NewAppMetrics()
+
+	promptManager, err := promptmanager.NewPromptManager(options.PromptsAmount, logger)
 	if err != nil {
 		logger.Error("Error create PromptManager %v", err)
 		panic(fmt.Sprintf("error create PromptManager %v", err))
 	}
 
-	ydArt := ydart.NewYdArt(&imageParameters, promptManager, logger)
+	ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
 	iYdArt := (opermanager.ImageProvider)(ydArt)
+	err = iYdArt.SetImageParameters(&imageParameters)
+	if err != nil {
+		logger.Error("Error setting image parameters: %v", err)
+		panic(fmt.Sprintf("error setting image parameters: %v", err))
+	}
 
 	dirManager, err := dirmanager.NewDirManager(options.ImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
 	if err != nil {
@@ -119,10 +140,12 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create DirManager %v", err))
 	}
 
-	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold, dirManager, logger)
+	operMng := opermanager.NewOperMngr(options.ImagePath, options.ImageGenerateThreshold,
+		&imageParameters,
+		options.SleepTimes, dirManager, appMetrics, logger)
 	operMng.AddImageProvider(&iYdArt)
 
-	restObj, err := rest.NewRest(port, logger, operMng, promptManager)
+	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
 	if err != nil {
 		logger.Error("Error create Rest %v", err)
 		panic(fmt.Sprintf("error create Rest %v", err))
@@ -135,9 +158,11 @@ func NewImgSrv(port string) *ImgSrv {
 		dirManager:       dirManager,
 		operManager:      operMng,
 		scheduleLogLevel: scheduleLogLevel,
+		metrics:          appMetrics,
 	}
 }
 func (app *ImgSrv) Start() {
+	app.metrics.Start()
 	err := app.dirManager.Start()
 	if err != nil {
 		app.logger.Error("Error start dirManager", err)
@@ -147,6 +172,8 @@ func (app *ImgSrv) Start() {
 	if err != nil {
 		app.logger.Error("Error start operManager", err)
 	}
+
+	metrics.StartMetricsLogging(app.logger, 60*time.Minute)
 
 	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.UTC),
 		gocron.WithLogger(
@@ -217,15 +244,77 @@ func readOptions() (ApplOptions, error) {
 		data.ImageLimitMax = imageLimitMaxDefault
 	}
 
-	if data.ImageHeight == 0 {
-		data.ImageHeight = imageHeightDefault
+	if data.PromptsAmount == 0 {
+		data.PromptsAmount = promptsAmountDefault
 	}
-	if data.ImageWeight == 0 {
-		data.ImageWeight = imageWeightDefault
+
+	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {
+		data.IframeImageParameters = &IframeImageParameters{ImageWeight: imageWeightDefault, ImageHeight: imageHeightDefault}
 	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {
 		panic("Option image_amount_min must be lower then image_amount_max")
 	}
 	return data, err
+}
+
+func logTimezoneConfiguration(logger *slog.Logger) {
+	logger.Info("=== CHECKING THE TIME CONFIGURATION ===")
+
+	info := getTimezoneInfo()
+
+	// Основная информация
+	logger.Info(fmt.Sprintf("= The final timezone: %s", info.SystemTZ))
+	logger.Info(fmt.Sprintf("= Current time: %s", info.LocalTime))
+	logger.Info(fmt.Sprintf("= UTC     time: %s", info.UTCTime))
+	logger.Info(fmt.Sprintf("= Offset from UTC: %s", info.Offset))
+
+	// Источник настроек
+	logger.Info(fmt.Sprintf("= Sources of settings:"))
+
+	if info.EnvironmentTZ != "" {
+		logger.Info(fmt.Sprintf("=     TZ variable: %s", info.EnvironmentTZ))
+	} else {
+		logger.Info(fmt.Sprintf("=     TZ variable: not set"))
+	}
+
+	if info.HasLocaltime {
+		logger.Info(fmt.Sprintf("=     /etc/localtime: mounted from the host"))
+	} else {
+		logger.Info(fmt.Sprintf("=     /etc/localtime: unavailable (using fallback)"))
+	}
+
+	logger.Info("=====================================")
+}
+
+type TimezoneInfo struct {
+	EnvironmentTZ string
+	SystemTZ      string
+	LocalTime     string
+	UTCTime       string
+	Offset        string
+	HasLocaltime  bool
+	HasTZVariable bool
+}
+
+func getTimezoneInfo() TimezoneInfo {
+	now := time.Now()
+
+	info := TimezoneInfo{
+		EnvironmentTZ: os.Getenv("TZ"),
+		SystemTZ:      now.Location().String(),
+		LocalTime:     now.Format("2006-01-02 15:04:05 MST"),
+		UTCTime:       now.UTC().Format("2006-01-02 15:04:05 MST"),
+		Offset:        now.Format("-0700"),
+		HasTZVariable: os.Getenv("TZ") != "",
+	}
+
+	// Проверяем наличие /etc/localtime
+	if _, err := os.Stat("/etc/localtime"); err == nil {
+		info.HasLocaltime = true
+	} else {
+		info.HasLocaltime = false
+	}
+
+	return info
 }

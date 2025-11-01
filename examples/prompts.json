@@ -1,0 +1,13 @@
+{
+    "prompts": [
+        {
+            "idx": 1,
+            "prompt": "test"
+        },
+        {
+            "idx": 2,
+            "prompt": "test test",
+            "negative": "blablabla"
+        }
+    ]
+}

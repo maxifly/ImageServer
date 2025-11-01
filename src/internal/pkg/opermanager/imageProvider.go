@@ -1,8 +1,16 @@
 package opermanager
 
+type ImageParameters struct {
+	Height int
+	Weight int
+}
+
 type ImageProvider interface {
 	GetImageProviderForImageServerName() string
-	Generate() (string, error)
-	GenerateWithPrompt(prompt string) (string, error)
+	GetImageProviderCode() string
+	Generate(isDirectCall bool) (string, error)
+	GenerateWithPrompt(prompt string, isDirectCall bool) (string, error)
 	GetImage(operationId string, filename string) (bool, error)
+	IsReadyForRequest() bool
+	SetImageParameters(parameters *ImageParameters) error
 }
