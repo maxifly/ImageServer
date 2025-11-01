@@ -302,9 +302,10 @@ func convertMapToPrompts(promptMap PromptMap) []Prompt {
 	prompts := make([]Prompt, 0, len(promptMap))
 	for idx, promptValue := range promptMap {
 		prompts = append(prompts, Prompt{
-			Idx:      idx,
-			Prompt:   promptValue.Prompt,
-			Negative: promptValue.Negative,
+			Idx:          idx,
+			Prompt:       promptValue.Prompt,
+			Negative:     promptValue.Negative,
+			Placeholders: promptValue.Placeholders,
 		})
 	}
 	return prompts
