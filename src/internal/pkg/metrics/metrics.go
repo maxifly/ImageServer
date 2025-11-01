@@ -127,7 +127,7 @@ func (m *AppMetrics) GetDailyMetricSafe(metricTime time.Time, metricType string)
 
 	// Регистрируем с уникальными именами
 	metric.RegistryName = fmt.Sprintf("app.daily.%s", key)
-	metrics.GetOrRegister(metric.RegistryName, metric)
+	metrics.GetOrRegister(metric.RegistryName, metric.Counter)
 
 	m.DailyCounters[key] = metric
 	return metric
