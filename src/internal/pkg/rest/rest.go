@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/helpers"
@@ -113,7 +114,7 @@ func NewRest(port string,
 	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
 	router.HandleFunc("/prompt/add", restObj.handleNewPrompt).Methods("POST")
 
-	logger.Error("(It is not error!!!) Run WEB-Server on http://127.0.0.1", "port", port)
+	logger.Error("(It is not error!!!) Run WEB-Server on https://127.0.0.1", "port", port)
 
 	return &restObj, nil
 
@@ -437,7 +438,19 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 }
 
 func (rest *Rest) Start() error {
-	return http.ListenAndServe(":"+rest.port, rest.router)
+	certFile := "/certs/cert.pem"
+	keyFile := "/certs/key.pem"
+
+	addr := ":" + rest.port
+
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		return fmt.Errorf("certificate not found: %s", certFile)
+	}
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		return fmt.Errorf("key not found: %s", keyFile)
+	}
+
+	return http.ListenAndServeTLS(addr, certFile, keyFile, rest.router)
 }
 
 func (rest *Rest) incrRequestMetric(metricType string, isError bool) {
