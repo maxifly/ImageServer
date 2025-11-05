@@ -218,7 +218,7 @@ func (app *ImgSrv) Start() {
 	}()
 
 	err = app.restObj.Start()
-	app.logger.Error("Error start rest", err)
+	app.logger.Error("Error start rest", "error", err)
 }
 
 func (app *ImgSrv) Stop() {
