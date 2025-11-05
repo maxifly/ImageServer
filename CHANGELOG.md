@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.04.0
+
+- Save image in original size.  [#9](https://github.com/maxifly/ImageServer/issues/9)
+- 
 ## 1.03.0
   **ТРЕБУЕТСЯ ПРОШИТЬ РАМКУ**: версией 1.03
 - Use https.  [#4](https://github.com/maxifly/ImageServer/issues/4)

@@ -181,7 +181,7 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string
 	return response.Id, nil
 }
 
-func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) {
+func (ydArt *YdArt) GetImage(operationId string, filename string, filenameOriginalSize string) (bool, error) {
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
@@ -198,7 +198,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 			return true, resultError
 		}
 		if response.Response.Image != "" {
-			err := processImage(filename, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
+			err := ydArt.processImage(filename, filenameOriginalSize, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
 			if err != nil {
 				resultError := fmt.Errorf("error image processing: %v", err)
 				ydArt.logger.Error(resultError.Error())
@@ -336,11 +336,16 @@ func (ydArt *YdArt) logBody(resp *http.Response) {
 
 }
 
-func processImage(fileName string, imageBase64 string, width, height int) error {
+func (ydArt *YdArt) processImage(fileName string, fileNameOriginalSize string, imageBase64 string, width, height int) error {
 	// Декодирование Base64
 	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
 	if err != nil {
 		return fmt.Errorf("ошибка при декодировании Base64: %v", err)
+	}
+
+	// Сохраняем оригинал
+	if err := saveOriginalImage(fileNameOriginalSize, imgBytes); err != nil {
+		ydArt.logger.Error("Error when save original image", "error", err, "fileName", fileNameOriginalSize)
 	}
 
 	// Декодирование изображения
@@ -368,6 +373,10 @@ func processImage(fileName string, imageBase64 string, width, height int) error 
 	}
 
 	return nil
+}
+
+func saveOriginalImage(originalFileName string, imgBytes []byte) error {
+	return os.WriteFile(originalFileName, imgBytes, 0644)
 }
 
 func readSecretOptions() (YdArtSecretOption, error) {
