@@ -6,9 +6,10 @@ services:
       - "8099:8099"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /home/maxim/ImageServerFiles/data:/data
-      - /home/maxim/ImageServerFiles/images:/images
-      - /home/maxim/ImageServerFiles/log:/log
+      - ${IMAGE_SERVER_DATA_ROOT}/certs:/certs:ro
+      - ${IMAGE_SERVER_DATA_ROOT}/data:/data
+      - ${IMAGE_SERVER_DATA_ROOT}/images:/images
+      - ${IMAGE_SERVER_DATA_ROOT}/log:/log
     restart: always
 
     environment:
