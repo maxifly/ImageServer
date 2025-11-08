@@ -6,6 +6,7 @@ type ImageParameters struct {
 }
 
 type ImageProvider interface {
+	Start() error
 	GetImageProviderForImageServerName() string
 	GetImageProviderCode() string
 	Generate(isDirectCall bool) (string, error)
