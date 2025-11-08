@@ -1,6 +1,8 @@
 package dirmanager
 
 import (
+	"errors"
+	"io/fs"
 	"log/slog"
 	"math/rand"
 	"os"
@@ -42,8 +44,35 @@ func NewDirManager(path string, limitMin int, limitMax int, logger *slog.Logger)
 	return manager, nil
 }
 func (dm *DirManager) Start() error {
+	exists, err := dm.isDirectoryExists()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		err := os.Mkdir(dm.directoryPath, 0777)
+		if err != nil {
+			return err
+		}
+	}
+
 	go dm.ReadFiles()
 	return nil
+}
+
+func (dm *DirManager) isDirectoryExists() (bool, error) {
+	_, err := os.Stat(dm.directoryPath)
+	if err == nil {
+		return true, nil
+	}
+
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (dm *DirManager) GetDirectoryPath() string {
+	return dm.directoryPath
 }
 
 // ReadFiles читает все файлы из каталога и сохраняет их информацию в список и карту

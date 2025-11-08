@@ -52,13 +52,13 @@ type SleepTime struct {
 }
 
 type OperMngr struct {
-	directoryPath      string
 	pendingOperations  *cache.Cache
 	completeOperations *cache.Cache
 	logger             *slog.Logger
 	imageProviders     []*ImageProvider
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
+	dirManagerOrig  *dirmanager.DirManager
 	idMutex         *IdMutex
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
@@ -79,10 +79,11 @@ type Operation struct {
 	status     *OperStatus
 }
 
-func NewOperMngr(directoryPath string, thresholdMinutes int,
+func NewOperMngr(thresholdMinutes int,
 	parameters *ImageParameters,
 	sleepTimes []*SleepTime,
 	dirManager *dirmanager.DirManager,
+	dirManagerOrig *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
 	logger *slog.Logger) *OperMngr {
 
@@ -90,10 +91,10 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
 	operMng := OperMngr{
-		directoryPath:      directoryPath,
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
 		dirManager:         dirManager,
+		dirManagerOrig:     dirManagerOrig,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
@@ -304,8 +305,9 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		return operation.(*Operation).status, nil
 	}
 	provider := operation.(*Operation).Provider
-	fileName := op.generateFileName(id)
-	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName)
+	fileName, fileNameOrig := op.generateFileName(id)
+
+	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName, fileNameOrig)
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +321,7 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		op.pendingOperations.Delete(id)
 
 		op.dirManager.AddFile(fileName)
+		op.dirManagerOrig.AddFile(fileNameOrig)
 	}
 
 	return &OperStatus{Status: StatusPending}, nil
@@ -442,7 +445,10 @@ func (op *OperMngr) generateId() string {
 	return "i" + strconv.Itoa(int(unixSeconds))
 }
 
-func (op *OperMngr) generateFileName(id string) string {
+func (op *OperMngr) generateFileName(id string) (string, string) {
 	unixSeconds := time.Now().Unix()
-	return filepath.Join(op.directoryPath, "f"+strconv.Itoa(int(unixSeconds))+".jpeg")
+	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
+	orig := "f" + strconv.Itoa(int(unixSeconds)) + "-orig.jpeg"
+
+	return filepath.Join(op.dirManager.GetDirectoryPath(), small), filepath.Join(op.dirManagerOrig.GetDirectoryPath(), orig)
 }
