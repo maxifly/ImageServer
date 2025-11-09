@@ -61,7 +61,7 @@ func NewDirManagerWithoutCleanup(path string, logger *slog.Logger) (*DirManager,
 	return manager, nil
 }
 func (dm *DirManager) Start() error {
-	exists, err := dm.isDirectoryExists()
+	exists, err := dm.IsDirectoryExists()
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func (dm *DirManager) Start() error {
 	return nil
 }
 
-func (dm *DirManager) isDirectoryExists() (bool, error) {
+func (dm *DirManager) IsDirectoryExists() (bool, error) {
 	_, err := os.Stat(dm.directoryPath)
 	if err == nil {
 		return true, nil

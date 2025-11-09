@@ -162,11 +162,26 @@ func NewImgSrv(port string) *ImgSrv {
 		iYdArt := (opermanager.ImageProvider)(ydArt)
 		err = iYdArt.SetImageParameters(&imageParameters)
 		if err != nil {
-			logger.Error("Error setting image parameters: %v", err)
-			panic(fmt.Sprintf("error setting image parameters: %v", err))
+			logger.Error("Error setting image parameters for ydArt: %v", err)
+			panic(fmt.Sprintf("error setting image parameters for ydArt: %v", err))
 		}
 
 		operMng.AddImageProvider(&iYdArt)
+	}
+	if !utils.Contains(options.DisabledProviders, "lim") && options.ProvidersOptions.LimOptions != nil {
+		lim, err := localimageprovider.NewLim(logger, options.ProvidersOptions.LimOptions)
+		if err != nil {
+			logger.Error("Error create lim provider: %v", err)
+			panic(fmt.Sprintf("error create lim provider: %v", err))
+		}
+		iLim := (opermanager.ImageProvider)(lim)
+		err = iLim.SetImageParameters(&imageParameters)
+		if err != nil {
+			logger.Error("Error setting image parameters for lim: %v", err)
+			panic(fmt.Sprintf("error setting image parameters for lim: %v", err))
+		}
+
+		operMng.AddImageProvider(&iLim)
 	}
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
@@ -190,17 +205,18 @@ func (app *ImgSrv) Start() {
 	app.metrics.Start()
 	err := app.dirManager.Start()
 	if err != nil {
-		app.logger.Error("Error start dirManager", err)
+		app.logger.Error("Error start dirManager", "error", err)
 	}
 
 	err = app.dirManagerOriginal.Start()
 	if err != nil {
-		app.logger.Error("Error start dirManagerOriginal", err)
+		app.logger.Error("Error start dirManagerOriginal", "error", err)
 	}
 
 	err = app.operManager.Start()
 	if err != nil {
-		app.logger.Error("Error start operManager", err)
+		app.logger.Error("Error start operManager", "error", err)
+		panic(fmt.Errorf("error start operManager: %v", err))
 	}
 
 	metrics.StartMetricsLogging(app.logger, 60*time.Minute)

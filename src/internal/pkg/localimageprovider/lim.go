@@ -32,7 +32,7 @@ type LimOptions struct {
 	LocalImageFolder       string `yaml:"local_image_folder"`
 }
 
-func NewLim(options *LimOptions, logger *slog.Logger) (*Lim, error) {
+func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 	var dm *dirmanager.DirManager = nil
 
 	if len(options.LocalImageFolder) > 0 {
@@ -61,7 +61,16 @@ func (lim *Lim) Start() error {
 	//TODO implement me
 
 	if lim.dm != nil {
-		err := lim.dm.Start()
+		exists, err := lim.dm.IsDirectoryExists()
+		if err != nil {
+			return err
+		}
+
+		if !exists {
+			return fmt.Errorf("lim directory does not exist")
+		}
+
+		err = lim.dm.Start()
 		if err != nil {
 			return err
 		}

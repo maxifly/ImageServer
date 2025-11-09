@@ -130,6 +130,15 @@ func (op *OperMngr) Start() error {
 		}
 	}
 
+	for _, provider := range op.imageProviders {
+		op.logger.Info("Start image provider", "provider", (*provider).GetImageProviderForImageServerName())
+		err := (*provider).Start()
+		if err != nil {
+			op.logger.Error("Error start image provider", "provider", (*provider).GetImageProviderForImageServerName(), "error", err)
+			return fmt.Errorf("error start provider: %v", err)
+		}
+	}
+
 	return nil
 }
 
