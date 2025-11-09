@@ -24,6 +24,7 @@ type Lim struct {
 	dm              *dirmanager.DirManager
 	imageParameters *opermanager.ImageParameters
 	ipr             *imageprocessor.Ipr
+	properties      *opermanager.ProviderProperties
 }
 
 type LimOptions struct {
@@ -49,6 +50,10 @@ func NewLim(options *LimOptions, logger *slog.Logger) (*Lim, error) {
 		isEnabled: false,
 		dm:        dm,
 		ipr:       imageprocessor.NewIpr(logger),
+		properties: &opermanager.ProviderProperties{
+			IsCanWorkWithPrompt: false,
+			IsNeedSaveOriginal:  false,
+		},
 	}, nil
 }
 
@@ -101,6 +106,6 @@ func (lim *Lim) SetImageParameters(parameters *opermanager.ImageParameters) erro
 	return nil
 }
 
-func (lim *Lim) IsCanWorkWithPrompt() bool {
-	return false
+func (lim *Lim) GetProperties() *opermanager.ProviderProperties {
+	return lim.properties
 }

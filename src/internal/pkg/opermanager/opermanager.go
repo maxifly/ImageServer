@@ -108,7 +108,7 @@ func NewOperMngr(thresholdMinutes int,
 
 func (op *OperMngr) AddImageProvider(imageProvider *ImageProvider) {
 	op.imageProviders = append(op.imageProviders, imageProvider)
-	if (*imageProvider).IsCanWorkWithPrompt() {
+	if (*imageProvider).GetProperties().IsCanWorkWithPrompt {
 		op.imageProvidersWithPrompt = append(op.imageProvidersWithPrompt, imageProvider)
 	}
 }

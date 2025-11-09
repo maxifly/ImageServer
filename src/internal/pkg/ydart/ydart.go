@@ -50,6 +50,7 @@ type YdArt struct {
 	promptManager   *promptmanager.PromptManager
 	actioner        *actioner.Actioner
 	ipr             *imageprocessor.Ipr
+	properties      *opermanager.ProviderProperties
 }
 
 type getImageResponse struct {
@@ -101,6 +102,10 @@ func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, o
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		ipr:           imageprocessor.NewIpr(logger),
+		properties: &opermanager.ProviderProperties{
+			IsCanWorkWithPrompt: true,
+			IsNeedSaveOriginal:  true,
+		},
 	}
 }
 
@@ -241,8 +246,8 @@ func (ydArt *YdArt) Start() error {
 	return nil
 }
 
-func (ydArt *YdArt) IsCanWorkWithPrompt() bool {
-	return true
+func (ydArt *YdArt) GetProperties() *opermanager.ProviderProperties {
+	return ydArt.properties
 }
 
 func (ydArt *YdArt) getPrompt() (string, error) {

@@ -5,6 +5,11 @@ type ImageParameters struct {
 	Weight int
 }
 
+type ProviderProperties struct {
+	IsCanWorkWithPrompt bool
+	IsNeedSaveOriginal  bool
+}
+
 type ImageProvider interface {
 	Start() error
 	GetImageProviderForImageServerName() string
@@ -14,5 +19,5 @@ type ImageProvider interface {
 	GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error)
 	IsReadyForRequest() bool
 	SetImageParameters(parameters *ImageParameters) error
-	IsCanWorkWithPrompt() bool
+	GetProperties() *ProviderProperties
 }
