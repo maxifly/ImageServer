@@ -51,8 +51,8 @@ func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 		dm:        dm,
 		ipr:       imageprocessor.NewIpr(logger),
 		properties: &opermanager.ProviderProperties{
-			IsCanWorkWithPrompt: false,
-			IsNeedSaveOriginal:  false,
+			IsCanWorkWithPrompt:  false,
+			IsNeedSaveLocalFiles: false,
 		},
 	}, nil
 }

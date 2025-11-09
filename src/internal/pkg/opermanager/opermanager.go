@@ -347,7 +347,15 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		return operation.(*Operation).status, nil
 	}
 	provider := operation.(*Operation).Provider
-	fileName, fileNameOrig := op.generateFileName(id)
+	var fileName, fileNameOrig string
+
+	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
+
+	if isNeedSaveLocalFiles {
+		fileName, fileNameOrig = op.generateFileName(id)
+	} else {
+		fileName, fileNameOrig = op.generateTemporaryFileName(id)
+	}
 
 	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName, fileNameOrig)
 	if err != nil {
@@ -362,8 +370,13 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		op.completeOperations.SetDefault(id, completeOperation)
 		op.pendingOperations.Delete(id)
 
-		op.dirManager.AddFile(fileName)
-		op.dirManagerOrig.AddFile(fileNameOrig)
+		if isNeedSaveLocalFiles {
+			op.dirManager.AddFile(fileName)
+			op.dirManagerOrig.AddFile(fileNameOrig)
+		} else {
+			op.dirManagerTemp.AddFile(fileName)
+		}
+
 	}
 
 	return &OperStatus{Status: StatusPending}, nil
@@ -493,4 +506,11 @@ func (op *OperMngr) generateFileName(id string) (string, string) {
 	orig := "f" + strconv.Itoa(int(unixSeconds)) + "-orig.jpeg"
 
 	return filepath.Join(op.dirManager.GetDirectoryPath(), small), filepath.Join(op.dirManagerOrig.GetDirectoryPath(), orig)
+}
+
+func (op *OperMngr) generateTemporaryFileName(id string) (string, string) {
+	unixSeconds := time.Now().Unix()
+	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
+
+	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small), ""
 }

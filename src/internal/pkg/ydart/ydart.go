@@ -103,8 +103,8 @@ func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, o
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		ipr:           imageprocessor.NewIpr(logger),
 		properties: &opermanager.ProviderProperties{
-			IsCanWorkWithPrompt: true,
-			IsNeedSaveOriginal:  true,
+			IsCanWorkWithPrompt:  true,
+			IsNeedSaveLocalFiles: true,
 		},
 	}
 }

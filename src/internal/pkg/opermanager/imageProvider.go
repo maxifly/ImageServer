@@ -6,8 +6,8 @@ type ImageParameters struct {
 }
 
 type ProviderProperties struct {
-	IsCanWorkWithPrompt bool
-	IsNeedSaveOriginal  bool
+	IsCanWorkWithPrompt  bool
+	IsNeedSaveLocalFiles bool
 }
 
 type ImageProvider interface {
