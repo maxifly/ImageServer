@@ -61,7 +61,12 @@ func (lim *Lim) Start() error {
 	//TODO implement me
 
 	if lim.dm != nil {
-		err := lim.dm.ReadFiles()
+		err := lim.dm.Start()
+		if err != nil {
+			return err
+		}
+
+		err = lim.dm.ReadFiles()
 		if err != nil {
 			lim.logger.Error("Error read files from local directory", "error", err)
 		}

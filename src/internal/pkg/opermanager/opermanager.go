@@ -29,6 +29,7 @@ const (
 )
 
 const BLACK_FILE_NAME = "black.jpeg"
+const TEMPORARY_IMAGE_DIR = "tmp_images"
 
 type Status string
 

@@ -7,11 +7,13 @@ import (
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/localimageprovider"
 	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
 	"imgserver/internal/pkg/rest"
+	"imgserver/internal/pkg/utils"
 	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"os"
@@ -45,7 +47,8 @@ type ImgSrv struct {
 }
 
 type ProvidersOptions struct {
-	YdArtOptions *ydart.YdArtOptions `yaml:"ydArt"`
+	YdArtOptions *ydart.YdArtOptions            `yaml:"ydArt"`
+	LimOptions   *localimageprovider.LimOptions `yaml:"lim"`
 }
 type IframeImageParameters struct {
 	ImageWeight int `yaml:"image_weight"`
@@ -65,6 +68,7 @@ type ApplOptions struct {
 	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
 	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
 	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
+	DisabledProviders             []string                 `yaml:"disabled_providers"`
 	PromptsAmount                 int                      `yaml:"prompts_amount"`
 }
 
@@ -132,14 +136,6 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create PromptManager %v", err))
 	}
 
-	ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
-	iYdArt := (opermanager.ImageProvider)(ydArt)
-	err = iYdArt.SetImageParameters(&imageParameters)
-	if err != nil {
-		logger.Error("Error setting image parameters: %v", err)
-		panic(fmt.Sprintf("error setting image parameters: %v", err))
-	}
-
 	scalableImagePath := filepath.Join(options.ImagePath, "scalable")
 	originalImagePath := filepath.Join(options.ImagePath, "original")
 
@@ -158,7 +154,20 @@ func NewImgSrv(port string) *ImgSrv {
 	operMng := opermanager.NewOperMngr(options.ImageGenerateThreshold,
 		&imageParameters,
 		options.SleepTimes, dirManager, dirManagerOriginal, appMetrics, logger)
-	operMng.AddImageProvider(&iYdArt)
+
+	// Создание провайдеров
+
+	if !utils.Contains(options.DisabledProviders, "ydArt") && options.ProvidersOptions.YdArtOptions != nil {
+		ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
+		iYdArt := (opermanager.ImageProvider)(ydArt)
+		err = iYdArt.SetImageParameters(&imageParameters)
+		if err != nil {
+			logger.Error("Error setting image parameters: %v", err)
+			panic(fmt.Sprintf("error setting image parameters: %v", err))
+		}
+
+		operMng.AddImageProvider(&iYdArt)
+	}
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
 	if err != nil {

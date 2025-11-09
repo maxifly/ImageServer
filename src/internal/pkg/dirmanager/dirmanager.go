@@ -120,7 +120,7 @@ func (dm *DirManager) ReadFiles() error {
 	defer dm.mutex.Unlock()
 	dm.fileList = fileList
 	dm.fileMap = fileMap
-	dm.logger.Debug("Read files ", "fileAmount", len(dm.fileList))
+	dm.logger.Debug("Read files ", "path", dm.directoryPath, "fileAmount", len(dm.fileList))
 	return nil
 }
 
