@@ -58,8 +58,6 @@ func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 }
 
 func (lim *Lim) Start() error {
-	//TODO implement me
-
 	if lim.dm != nil {
 		exists, err := lim.dm.IsDirectoryExists()
 		if err != nil {
@@ -122,4 +120,9 @@ func (lim *Lim) SetImageParameters(parameters *opermanager.ImageParameters) erro
 
 func (lim *Lim) GetProperties() *opermanager.ProviderProperties {
 	return lim.properties
+}
+
+func (lim *Lim) Refresh() error {
+	lim.logger.Debug("Refresh local image provider")
+	return lim.dm.ReadFiles()
 }

@@ -23,6 +23,7 @@ import (
 
 const (
 	FILE_PATH_OPTIONS                    = "/data/options.yml"
+	refreshLocalImageProviderSchedule    = "30 * * * *"
 	checkPendingOperationScheduleDefault = "* * * * *"
 	scanImageFolderScheduleDefault       = "0 0 * * *"
 	imageLimitMinDefault                 = 1000
@@ -44,6 +45,7 @@ type ImgSrv struct {
 	scheduler          gocron.Scheduler
 	scheduleLogLevel   gocron.LogLevel
 	metrics            *metrics.AppMetrics
+	lim                *localimageprovider.Lim
 }
 
 type ProvidersOptions struct {
@@ -151,9 +153,24 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create DirManager %v", err))
 	}
 
-	operMng := opermanager.NewOperMngr(options.ImageGenerateThreshold,
+	operMng, err := opermanager.NewOperMngr(options.ImageGenerateThreshold,
 		&imageParameters,
 		options.SleepTimes, dirManager, dirManagerOriginal, appMetrics, logger)
+
+	if err != nil {
+		logger.Error("Error create OperManager %v", err)
+		panic(fmt.Sprintf("error create OperManager %v", err))
+	}
+
+	imgsrv := ImgSrv{
+		options:            options,
+		logger:             logger,
+		dirManager:         dirManager,
+		dirManagerOriginal: dirManagerOriginal,
+		operManager:        operMng,
+		scheduleLogLevel:   scheduleLogLevel,
+		metrics:            appMetrics,
+	}
 
 	// Создание провайдеров
 
@@ -182,6 +199,7 @@ func NewImgSrv(port string) *ImgSrv {
 		}
 
 		operMng.AddImageProvider(&iLim)
+		imgsrv.lim = lim
 	}
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
@@ -190,17 +208,11 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create Rest %v", err))
 	}
 
-	return &ImgSrv{
-		options:            options,
-		logger:             logger,
-		restObj:            restObj,
-		dirManager:         dirManager,
-		dirManagerOriginal: dirManagerOriginal,
-		operManager:        operMng,
-		scheduleLogLevel:   scheduleLogLevel,
-		metrics:            appMetrics,
-	}
+	imgsrv.restObj = restObj
+
+	return &imgsrv
 }
+
 func (app *ImgSrv) Start() {
 	app.metrics.Start()
 	err := app.dirManager.Start()
@@ -274,6 +286,26 @@ func (app *ImgSrv) Start() {
 			},
 		),
 	)
+
+	// Обновление данных провайдера локальных изображений
+	if app.lim != nil {
+		app.logger.Debug("Create refresh local image provider task")
+		_, err = app.scheduler.NewJob(
+			gocron.CronJob(
+				// standard cron tab parsing
+				refreshLocalImageProviderSchedule,
+				false,
+			),
+			gocron.NewTask(
+				func() {
+					err := app.lim.Refresh()
+					if err != nil {
+						app.logger.Error("Error when refresh local image provider", "err", err)
+					}
+				},
+			),
+		)
+	}
 
 	// Запуск планировщика в отдельной горутине
 	go func() {

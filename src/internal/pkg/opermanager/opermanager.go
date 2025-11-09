@@ -61,6 +61,7 @@ type OperMngr struct {
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
 	dirManagerOrig  *dirmanager.DirManager
+	dirManagerTemp  *dirmanager.DirManager
 	idMutex         *IdMutex
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
@@ -87,16 +88,23 @@ func NewOperMngr(thresholdMinutes int,
 	dirManager *dirmanager.DirManager,
 	dirManagerOrig *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
-	logger *slog.Logger) *OperMngr {
+	logger *slog.Logger) (*OperMngr, error) {
 
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
+
+	dirManagerTemp, err := dirmanager.NewDirManager(TEMPORARY_IMAGE_DIR, 5, 10, logger)
+
+	if err != nil {
+		return nil, err
+	}
 
 	operMng := OperMngr{
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
 		dirManager:         dirManager,
 		dirManagerOrig:     dirManagerOrig,
+		dirManagerTemp:     dirManagerTemp,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
@@ -104,7 +112,7 @@ func NewOperMngr(thresholdMinutes int,
 		imageParameters:    parameters,
 		metrics:            metrics,
 	}
-	return &operMng
+	return &operMng, nil
 }
 
 func (op *OperMngr) AddImageProvider(imageProvider *ImageProvider) {
@@ -128,6 +136,12 @@ func (op *OperMngr) Start() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	err = op.dirManagerTemp.Start()
+	if err != nil {
+		op.logger.Error("Error start temporary directory manager", "error", err)
+		return fmt.Errorf("error start temporary directory manager: %v", err)
 	}
 
 	for _, provider := range op.imageProviders {
