@@ -201,7 +201,7 @@ func (dm *DirManager) innerCleanUp() {
 
 	// Сортируем файлы по времени изменения
 	sort.Slice(dm.fileList, func(i, j int) bool {
-		return dm.fileList[i].ModTime.Before(dm.fileList[j].ModTime)
+		return dm.fileList[i].ModTime.After(dm.fileList[j].ModTime)
 	})
 
 	// Удаляем лишние файлы
