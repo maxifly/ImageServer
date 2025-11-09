@@ -25,6 +25,7 @@ type DirManager struct {
 	fileList      []fileInfo
 	limitMin      int
 	limitMax      int
+	useCleanup    bool
 	fileMap       map[string]struct{}
 	mutex         sync.Mutex
 	logger        *slog.Logger
@@ -36,6 +37,22 @@ func NewDirManager(path string, limitMin int, limitMax int, logger *slog.Logger)
 		directoryPath: path,
 		limitMin:      limitMin,
 		limitMax:      limitMax,
+		useCleanup:    true,
+		logger:        logger,
+		fileList:      []fileInfo{},
+		fileMap:       make(map[string]struct{}),
+	}
+
+	return manager, nil
+}
+
+// NewDirManagerWithoutCleanup создает новый экземпляр DirManager
+func NewDirManagerWithoutCleanup(path string, logger *slog.Logger) (*DirManager, error) {
+	manager := &DirManager{
+		directoryPath: path,
+		limitMin:      0,
+		limitMax:      0,
+		useCleanup:    false,
 		logger:        logger,
 		fileList:      []fileInfo{},
 		fileMap:       make(map[string]struct{}),
@@ -155,7 +172,6 @@ func (dm *DirManager) AddFile(filename string) error {
 	dm.fileMap[fullPath] = struct{}{}
 	// Проверяем лимит и очищаем, если необходимо
 	if len(dm.fileList) > dm.limitMax {
-		dm.logger.Debug("Need cleanup")
 		dm.innerCleanUp()
 	}
 	return nil
@@ -169,11 +185,20 @@ func (dm *DirManager) CleanUp() {
 	dm.innerCleanUp()
 }
 
+func (dm *DirManager) GetFileCount() int {
+	return len(dm.fileList)
+}
+
 func (dm *DirManager) innerCleanUp() {
+	if !dm.useCleanup {
+		return
+	}
 
 	if len(dm.fileList) <= dm.limitMax {
 		return
 	}
+	dm.logger.Debug("Need cleanup")
+
 	// Сортируем файлы по времени изменения
 	sort.Slice(dm.fileList, func(i, j int) bool {
 		return dm.fileList[i].ModTime.Before(dm.fileList[j].ModTime)

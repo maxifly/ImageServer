@@ -1,7 +1,9 @@
 package localimageprovider
 
 import (
+	"fmt"
 	"imgserver/internal/pkg/actioner"
+	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/opermanager"
 	"log/slog"
 	"time"
@@ -14,10 +16,12 @@ const (
 var _ opermanager.ImageProvider = (*Lim)(nil)
 
 type Lim struct {
-	options   *LimOptions
-	actioner  *actioner.Actioner
-	logger    *slog.Logger
-	isEnabled bool
+	options         *LimOptions
+	actioner        *actioner.Actioner
+	logger          *slog.Logger
+	isEnabled       bool
+	dm              *dirmanager.DirManager
+	imageParameters *opermanager.ImageParameters
 }
 
 type LimOptions struct {
@@ -25,18 +29,39 @@ type LimOptions struct {
 	LocalImageFolder       string `yaml:"local_image_folder"`
 }
 
-func NewLim(options *LimOptions, logger *slog.Logger) *Lim {
+func NewLim(options *LimOptions, logger *slog.Logger) (*Lim, error) {
+	var dm *dirmanager.DirManager = nil
+
+	if len(options.LocalImageFolder) > 0 {
+		dm1, err := dirmanager.NewDirManagerWithoutCleanup(options.LocalImageFolder, logger)
+		if err != nil {
+			return nil, err
+		}
+		dm = dm1
+	}
+
 	return &Lim{
 		options:   options,
 		logger:    logger,
 		actioner:  actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		isEnabled: false,
-	}
+		dm:        dm,
+	}, nil
 }
 
 func (lim *Lim) Start() error {
 	//TODO implement me
-	panic("implement me")
+
+	if lim.dm != nil {
+		err := lim.dm.ReadFiles()
+		if err != nil {
+			lim.logger.Error("Error read files from local directory", "error", err)
+		}
+	} else {
+		lim.isEnabled = false
+	}
+
+	return nil
 }
 
 func (lim *Lim) GetImageProviderForImageServerName() string {
@@ -48,13 +73,11 @@ func (lim *Lim) GetImageProviderCode() string {
 }
 
 func (lim *Lim) Generate(isDirectCall bool) (string, error) {
-	//TODO implement me
-	panic("implement me")
+	return "lim_operation_id", nil
 }
 
 func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
-	//TODO implement me
-	panic("implement me")
+	return "lim_operation_id", fmt.Errorf("Can not generate image by prompt")
 }
 
 func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error) {
@@ -63,11 +86,10 @@ func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSi
 }
 
 func (lim *Lim) IsReadyForRequest() bool {
-	//TODO implement me
-	panic("implement me")
+	return lim.isEnabled && lim.dm.GetFileCount() > 0
 }
 
 func (lim *Lim) SetImageParameters(parameters *opermanager.ImageParameters) error {
-	//TODO implement me
-	panic("implement me")
+	lim.imageParameters = parameters
+	return nil
 }
