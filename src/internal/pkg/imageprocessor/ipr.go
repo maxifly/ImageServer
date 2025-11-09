@@ -19,12 +19,27 @@ func NewIpr(logger *slog.Logger) *Ipr {
 	return &Ipr{logger: logger}
 }
 
+func (ipr *Ipr) ProcessImageFromFile(fileName string, fileNameOriginalSize string, sourceFile string, width, height int) error {
+	// Декодирование Base64
+	imgBytes, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return fmt.Errorf("error when read file %v", err)
+	}
+
+	return ipr.ProcessImageFromSLice(fileName, fileNameOriginalSize, imgBytes, width, height)
+}
+
 func (ipr *Ipr) ProcessImageFromBase64(fileName string, fileNameOriginalSize string, imageBase64 string, width, height int) error {
 	// Декодирование Base64
 	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
 	if err != nil {
-		return fmt.Errorf("ошибка при декодировании Base64: %v", err)
+		return fmt.Errorf("error when decode Base64: %v", err)
 	}
+
+	return ipr.ProcessImageFromSLice(fileName, fileNameOriginalSize, imgBytes, width, height)
+}
+
+func (ipr *Ipr) ProcessImageFromSLice(fileName string, fileNameOriginalSize string, imgBytes []byte, width, height int) error {
 
 	// Сохраняем оригинал
 	if err := saveOriginalImage(fileNameOriginalSize, imgBytes); err != nil {

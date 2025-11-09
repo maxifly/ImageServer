@@ -196,7 +196,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string, filenameOrigin
 			return true, resultError
 		}
 		if response.Response.Image != "" {
-			err := ydArt.ipr.processImage(filename, filenameOriginalSize, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
+			err := ydArt.ipr.ProcessImageFromBase64(filename, filenameOriginalSize, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
 			if err != nil {
 				resultError := fmt.Errorf("error image processing: %v", err)
 				ydArt.logger.Error(resultError.Error())
@@ -239,6 +239,10 @@ func (ydArt *YdArt) IsReadyForRequest() bool {
 
 func (ydArt *YdArt) Start() error {
 	return nil
+}
+
+func (ydArt *YdArt) IsCanWorkWithPrompt() bool {
+	return true
 }
 
 func (ydArt *YdArt) getPrompt() (string, error) {

@@ -14,4 +14,5 @@ type ImageProvider interface {
 	GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error)
 	IsReadyForRequest() bool
 	SetImageParameters(parameters *ImageParameters) error
+	IsCanWorkWithPrompt() bool
 }

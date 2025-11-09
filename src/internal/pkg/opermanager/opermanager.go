@@ -52,10 +52,11 @@ type SleepTime struct {
 }
 
 type OperMngr struct {
-	pendingOperations  *cache.Cache
-	completeOperations *cache.Cache
-	logger             *slog.Logger
-	imageProviders     []*ImageProvider
+	pendingOperations        *cache.Cache
+	completeOperations       *cache.Cache
+	logger                   *slog.Logger
+	imageProviders           []*ImageProvider
+	imageProvidersWithPrompt []*ImageProvider
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
 	dirManagerOrig  *dirmanager.DirManager
@@ -107,6 +108,9 @@ func NewOperMngr(thresholdMinutes int,
 
 func (op *OperMngr) AddImageProvider(imageProvider *ImageProvider) {
 	op.imageProviders = append(op.imageProviders, imageProvider)
+	if (*imageProvider).IsCanWorkWithPrompt() {
+		op.imageProvidersWithPrompt = append(op.imageProvidersWithPrompt, imageProvider)
+	}
 }
 
 func (op *OperMngr) Start() error {
@@ -132,7 +136,7 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 	//op.metrics.TotalRequests.Inc(1)
 	if optype == "ydart" {
 		op.logger.Info("Start direct provider operation")
-		provider := op.getImageProvider()
+		provider := op.getImageProvider(len(prompt) > 0)
 		return op.startProviderOperation(provider, prompt, true)
 	} else if optype == "old" {
 		return op.startOldPictureOperation()
@@ -141,16 +145,30 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 
 }
 
-func (op *OperMngr) getImageProvider() *ImageProvider {
-	if len(op.imageProviders) == 1 {
-		op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
-		return op.imageProviders[0]
+func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
+	if withPrompt {
+		if len(op.imageProvidersWithPrompt) == 1 {
+			op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[0]).GetImageProviderForImageServerName())
+			return op.imageProvidersWithPrompt[0]
+		}
+
+		idx := rand.Intn(len(op.imageProvidersWithPrompt))
+		op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[idx]).GetImageProviderForImageServerName())
+
+		return op.imageProvidersWithPrompt[idx]
+	} else {
+
+		if len(op.imageProviders) == 1 {
+			op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
+			return op.imageProviders[0]
+		}
+
+		idx := rand.Intn(len(op.imageProviders))
+		op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
+
+		return op.imageProviders[idx]
 	}
 
-	idx := rand.Intn(len(op.imageProviders))
-	op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
-
-	return op.imageProviders[idx]
 }
 
 func (op *OperMngr) chooseImageProvider() *ImageProvider {

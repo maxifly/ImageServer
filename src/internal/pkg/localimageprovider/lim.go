@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/opermanager"
 	"log/slog"
 	"time"
@@ -22,6 +23,7 @@ type Lim struct {
 	isEnabled       bool
 	dm              *dirmanager.DirManager
 	imageParameters *opermanager.ImageParameters
+	ipr             *imageprocessor.Ipr
 }
 
 type LimOptions struct {
@@ -46,6 +48,7 @@ func NewLim(options *LimOptions, logger *slog.Logger) (*Lim, error) {
 		actioner:  actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		isEnabled: false,
 		dm:        dm,
+		ipr:       imageprocessor.NewIpr(logger),
 	}, nil
 }
 
@@ -77,12 +80,16 @@ func (lim *Lim) Generate(isDirectCall bool) (string, error) {
 }
 
 func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
-	return "lim_operation_id", fmt.Errorf("Can not generate image by prompt")
+	return "lim_operation_id", fmt.Errorf("can not generate image by prompt")
 }
 
 func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error) {
-	//TODO implement me
-	panic("implement me")
+	sourceFile := lim.dm.GetRandomFile()
+	err := lim.ipr.ProcessImageFromFile(filename, "", sourceFile, lim.imageParameters.Weight, lim.imageParameters.Height)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (lim *Lim) IsReadyForRequest() bool {
@@ -92,4 +99,8 @@ func (lim *Lim) IsReadyForRequest() bool {
 func (lim *Lim) SetImageParameters(parameters *opermanager.ImageParameters) error {
 	lim.imageParameters = parameters
 	return nil
+}
+
+func (lim *Lim) IsCanWorkWithPrompt() bool {
+	return false
 }
