@@ -20,7 +20,6 @@ type Lim struct {
 	options         *LimOptions
 	actioner        *actioner.Actioner
 	logger          *slog.Logger
-	isEnabled       bool
 	dm              *dirmanager.DirManager
 	imageParameters *opermanager.ImageParameters
 	ipr             *imageprocessor.Ipr
@@ -44,12 +43,11 @@ func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 	}
 
 	return &Lim{
-		options:   options,
-		logger:    logger,
-		actioner:  actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
-		isEnabled: false,
-		dm:        dm,
-		ipr:       imageprocessor.NewIpr(logger),
+		options:  options,
+		logger:   logger,
+		actioner: actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
+		dm:       dm,
+		ipr:      imageprocessor.NewIpr(logger),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  false,
 			IsNeedSaveLocalFiles: false,
@@ -77,8 +75,6 @@ func (lim *Lim) Start() error {
 		if err != nil {
 			lim.logger.Error("Error read files from local directory", "error", err)
 		}
-	} else {
-		lim.isEnabled = false
 	}
 
 	return nil
@@ -93,6 +89,9 @@ func (lim *Lim) GetImageProviderCode() string {
 }
 
 func (lim *Lim) Generate(isDirectCall bool) (string, error) {
+	if !isDirectCall {
+		lim.actioner.SetLastCallTime(time.Now())
+	}
 	return "lim_operation_id", nil
 }
 
@@ -110,7 +109,14 @@ func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSi
 }
 
 func (lim *Lim) IsReadyForRequest() bool {
-	return lim.isEnabled && lim.dm.GetFileCount() > 0
+	if lim.dm == nil {
+		return false
+	}
+	if !lim.actioner.ThresholdOut(time.Now()) {
+		// Провайдер вызывался недавно. Он не готов к новому вызову.
+		return false
+	}
+	return lim.dm.GetFileCount() > 0
 }
 
 func (lim *Lim) SetImageParameters(parameters *opermanager.ImageParameters) error {
