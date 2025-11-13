@@ -146,6 +146,7 @@ func (dm *DirManager) AddFile(filename string) error {
 
 	// Проверяем расширение
 	if !strings.HasSuffix(filename, ".jpeg") {
+		dm.logger.Warn("Unexpected file type", "file", filename)
 		return nil
 	}
 
