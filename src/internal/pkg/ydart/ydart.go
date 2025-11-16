@@ -88,7 +88,7 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
+func NewYdArt(imageParameters imageprocessor.ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
 	soptions, err := readSecretOptions()
 	if err != nil {
 		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
@@ -101,7 +101,7 @@ func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, o
 		options:       options,
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
-		ipr:           imageprocessor.NewIpr(logger),
+		ipr:           imageprocessor.NewIpr(imageParameters, logger),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  true,
 			IsNeedSaveLocalFiles: true,
