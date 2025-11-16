@@ -29,6 +29,7 @@ const (
 )
 
 const BLACK_FILE_NAME = "black.jpeg"
+const TEMPORARY_IMAGE_DIR = "tmp_images"
 
 type Status string
 
@@ -52,13 +53,15 @@ type SleepTime struct {
 }
 
 type OperMngr struct {
-	directoryPath      string
-	pendingOperations  *cache.Cache
-	completeOperations *cache.Cache
-	logger             *slog.Logger
-	imageProviders     []*ImageProvider
+	pendingOperations        *cache.Cache
+	completeOperations       *cache.Cache
+	logger                   *slog.Logger
+	imageProviders           []*ImageProvider
+	imageProvidersWithPrompt []*ImageProvider
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
+	dirManagerOrig  *dirmanager.DirManager
+	dirManagerTemp  *dirmanager.DirManager
 	idMutex         *IdMutex
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
@@ -79,21 +82,29 @@ type Operation struct {
 	status     *OperStatus
 }
 
-func NewOperMngr(directoryPath string, thresholdMinutes int,
+func NewOperMngr(thresholdMinutes int,
 	parameters *ImageParameters,
 	sleepTimes []*SleepTime,
 	dirManager *dirmanager.DirManager,
+	dirManagerOrig *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
-	logger *slog.Logger) *OperMngr {
+	logger *slog.Logger) (*OperMngr, error) {
 
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
+	dirManagerTemp, err := dirmanager.NewDirManager(TEMPORARY_IMAGE_DIR, 5, 10, logger)
+
+	if err != nil {
+		return nil, err
+	}
+
 	operMng := OperMngr{
-		directoryPath:      directoryPath,
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
 		dirManager:         dirManager,
+		dirManagerOrig:     dirManagerOrig,
+		dirManagerTemp:     dirManagerTemp,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
@@ -101,11 +112,14 @@ func NewOperMngr(directoryPath string, thresholdMinutes int,
 		imageParameters:    parameters,
 		metrics:            metrics,
 	}
-	return &operMng
+	return &operMng, nil
 }
 
 func (op *OperMngr) AddImageProvider(imageProvider *ImageProvider) {
 	op.imageProviders = append(op.imageProviders, imageProvider)
+	if (*imageProvider).GetProperties().IsCanWorkWithPrompt {
+		op.imageProvidersWithPrompt = append(op.imageProvidersWithPrompt, imageProvider)
+	}
 }
 
 func (op *OperMngr) Start() error {
@@ -124,6 +138,21 @@ func (op *OperMngr) Start() error {
 		}
 	}
 
+	err = op.dirManagerTemp.Start()
+	if err != nil {
+		op.logger.Error("Error start temporary directory manager", "error", err)
+		return fmt.Errorf("error start temporary directory manager: %v", err)
+	}
+
+	for _, provider := range op.imageProviders {
+		op.logger.Info("Start image provider", "provider", (*provider).GetImageProviderForImageServerName())
+		err := (*provider).Start()
+		if err != nil {
+			op.logger.Error("Error start image provider", "provider", (*provider).GetImageProviderForImageServerName(), "error", err)
+			return fmt.Errorf("error start provider: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -131,7 +160,7 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 	//op.metrics.TotalRequests.Inc(1)
 	if optype == "ydart" {
 		op.logger.Info("Start direct provider operation")
-		provider := op.getImageProvider()
+		provider := op.getImageProvider(len(prompt) > 0)
 		return op.startProviderOperation(provider, prompt, true)
 	} else if optype == "old" {
 		return op.startOldPictureOperation()
@@ -140,16 +169,30 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 
 }
 
-func (op *OperMngr) getImageProvider() *ImageProvider {
-	if len(op.imageProviders) == 1 {
-		op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
-		return op.imageProviders[0]
+func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
+	if withPrompt {
+		if len(op.imageProvidersWithPrompt) == 1 {
+			op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[0]).GetImageProviderForImageServerName())
+			return op.imageProvidersWithPrompt[0]
+		}
+
+		idx := rand.Intn(len(op.imageProvidersWithPrompt))
+		op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[idx]).GetImageProviderForImageServerName())
+
+		return op.imageProvidersWithPrompt[idx]
+	} else {
+
+		if len(op.imageProviders) == 1 {
+			op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
+			return op.imageProviders[0]
+		}
+
+		idx := rand.Intn(len(op.imageProviders))
+		op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
+
+		return op.imageProviders[idx]
 	}
 
-	idx := rand.Intn(len(op.imageProviders))
-	op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
-
-	return op.imageProviders[idx]
 }
 
 func (op *OperMngr) chooseImageProvider() *ImageProvider {
@@ -304,8 +347,17 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		return operation.(*Operation).status, nil
 	}
 	provider := operation.(*Operation).Provider
-	fileName := op.generateFileName(id)
-	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName)
+	var fileName, fileNameOrig string
+
+	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
+
+	if isNeedSaveLocalFiles {
+		fileName, fileNameOrig = op.generateFileName(id)
+	} else {
+		fileName, fileNameOrig = op.generateTemporaryFileName(id)
+	}
+
+	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName, fileNameOrig)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +370,13 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		op.completeOperations.SetDefault(id, completeOperation)
 		op.pendingOperations.Delete(id)
 
-		op.dirManager.AddFile(fileName)
+		if isNeedSaveLocalFiles {
+			op.dirManager.AddFile(fileName)
+			op.dirManagerOrig.AddFile(fileNameOrig)
+		} else {
+			op.dirManagerTemp.AddFile(fileName)
+		}
+
 	}
 
 	return &OperStatus{Status: StatusPending}, nil
@@ -442,7 +500,17 @@ func (op *OperMngr) generateId() string {
 	return "i" + strconv.Itoa(int(unixSeconds))
 }
 
-func (op *OperMngr) generateFileName(id string) string {
+func (op *OperMngr) generateFileName(id string) (string, string) {
 	unixSeconds := time.Now().Unix()
-	return filepath.Join(op.directoryPath, "f"+strconv.Itoa(int(unixSeconds))+".jpeg")
+	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
+	orig := "f" + strconv.Itoa(int(unixSeconds)) + "-orig.jpeg"
+
+	return filepath.Join(op.dirManager.GetDirectoryPath(), small), filepath.Join(op.dirManagerOrig.GetDirectoryPath(), orig)
+}
+
+func (op *OperMngr) generateTemporaryFileName(id string) (string, string) {
+	unixSeconds := time.Now().Unix()
+	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
+
+	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small), ""
 }

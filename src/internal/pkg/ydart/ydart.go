@@ -2,12 +2,10 @@ package ydart
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/image/draw"
-	"image"
 	"imgserver/internal/pkg/actioner"
+	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
 	"imgserver/internal/pkg/timerange"
@@ -15,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	//"image/draw"
-	"image/jpeg"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,6 +49,8 @@ type YdArt struct {
 	imageParameters *opermanager.ImageParameters
 	promptManager   *promptmanager.PromptManager
 	actioner        *actioner.Actioner
+	ipr             *imageprocessor.Ipr
+	properties      *opermanager.ProviderProperties
 }
 
 type getImageResponse struct {
@@ -103,6 +101,11 @@ func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, o
 		options:       options,
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
+		ipr:           imageprocessor.NewIpr(logger),
+		properties: &opermanager.ProviderProperties{
+			IsCanWorkWithPrompt:  true,
+			IsNeedSaveLocalFiles: true,
+		},
 	}
 }
 
@@ -181,7 +184,7 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string
 	return response.Id, nil
 }
 
-func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) {
+func (ydArt *YdArt) GetImage(operationId string, filename string, filenameOriginalSize string) (bool, error) {
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
@@ -198,7 +201,7 @@ func (ydArt *YdArt) GetImage(operationId string, filename string) (bool, error) 
 			return true, resultError
 		}
 		if response.Response.Image != "" {
-			err := processImage(filename, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
+			err := ydArt.ipr.ProcessImageFromBase64(filename, filenameOriginalSize, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
 			if err != nil {
 				resultError := fmt.Errorf("error image processing: %v", err)
 				ydArt.logger.Error(resultError.Error())
@@ -237,6 +240,14 @@ func (ydArt *YdArt) IsReadyForRequest() bool {
 	}
 
 	return true
+}
+
+func (ydArt *YdArt) Start() error {
+	return nil
+}
+
+func (ydArt *YdArt) GetProperties() *opermanager.ProviderProperties {
+	return ydArt.properties
 }
 
 func (ydArt *YdArt) getPrompt() (string, error) {
@@ -336,39 +347,48 @@ func (ydArt *YdArt) logBody(resp *http.Response) {
 
 }
 
-func processImage(fileName string, imageBase64 string, width, height int) error {
-	// Декодирование Base64
-	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
-	if err != nil {
-		return fmt.Errorf("ошибка при декодировании Base64: %v", err)
-	}
-
-	// Декодирование изображения
-	img, err := jpeg.Decode(bytes.NewReader(imgBytes))
-	if err != nil {
-		return fmt.Errorf("ошибка при декодировании изображения: %v", err)
-	}
-
-	// Создание нового изображения с указанными размерами
-	newImg := image.NewRGBA(image.Rect(0, 0, width, height))
-
-	// Масштабирование изображения
-	draw.CatmullRom.Scale(newImg, newImg.Bounds(), img, img.Bounds(), draw.Over, nil)
-
-	// Запись измененного изображения в файл
-	outFile, err := os.Create(fileName)
-	if err != nil {
-		return fmt.Errorf("ошибка при создании файла: %v", err)
-	}
-	defer outFile.Close()
-
-	err = jpeg.Encode(outFile, newImg, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка при записи изображения в файл: %v", err)
-	}
-
-	return nil
-}
+//func (ydArt *YdArt) processImage(fileName string, fileNameOriginalSize string, imageBase64 string, width, height int) error {
+//	// Декодирование Base64
+//	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
+//	if err != nil {
+//		return fmt.Errorf("ошибка при декодировании Base64: %v", err)
+//	}
+//
+//	// Сохраняем оригинал
+//	if err := saveOriginalImage(fileNameOriginalSize, imgBytes); err != nil {
+//		ydArt.logger.Error("Error when save original image", "error", err, "fileName", fileNameOriginalSize)
+//	}
+//
+//	// Декодирование изображения
+//	img, err := jpeg.Decode(bytes.NewReader(imgBytes))
+//	if err != nil {
+//		return fmt.Errorf("ошибка при декодировании изображения: %v", err)
+//	}
+//
+//	// Создание нового изображения с указанными размерами
+//	newImg := image.NewRGBA(image.Rect(0, 0, width, height))
+//
+//	// Масштабирование изображения
+//	draw.CatmullRom.Scale(newImg, newImg.Bounds(), img, img.Bounds(), draw.Over, nil)
+//
+//	// Запись измененного изображения в файл
+//	outFile, err := os.Create(fileName)
+//	if err != nil {
+//		return fmt.Errorf("ошибка при создании файла: %v", err)
+//	}
+//	defer outFile.Close()
+//
+//	err = jpeg.Encode(outFile, newImg, nil)
+//	if err != nil {
+//		return fmt.Errorf("ошибка при записи изображения в файл: %v", err)
+//	}
+//
+//	return nil
+//}
+//
+//func saveOriginalImage(originalFileName string, imgBytes []byte) error {
+//	return os.WriteFile(originalFileName, imgBytes, 0644)
+//}
 
 func readSecretOptions() (YdArtSecretOption, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
