@@ -7,6 +7,7 @@ import (
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/localimageprovider"
 	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/mylogger"
@@ -22,17 +23,8 @@ import (
 )
 
 const (
-	FILE_PATH_OPTIONS                    = "/data/options.yml"
-	refreshLocalImageProviderSchedule    = "30 * * * *"
-	checkPendingOperationScheduleDefault = "* * * * *"
-	scanImageFolderScheduleDefault       = "0 0 * * *"
-	imageLimitMinDefault                 = 1000
-	imageLimitMaxDefault                 = 2000
-	originalImageLimitMinDefault         = 1000
-	originalImageLimitMaxDefault         = 2000
-	imageHeightDefault                   = 480
-	imageWeightDefault                   = 320
-	promptsAmountDefault                 = 10
+	FILE_PATH_OPTIONS                 = "/data/options.yml"
+	refreshLocalImageProviderSchedule = "30 * * * *"
 )
 
 type ImgSrv struct {
@@ -53,8 +45,9 @@ type ProvidersOptions struct {
 	LimOptions   *localimageprovider.LimOptions `yaml:"lim"`
 }
 type IframeImageParameters struct {
-	ImageWeight int `yaml:"image_weight"`
-	ImageHeight int `yaml:"image_height"`
+	ImageWeight  int     `yaml:"image_weight"`
+	ImageHeight  int     `yaml:"image_height"`
+	FitThreshold float64 `yaml:"fit_threshold"`
 }
 
 type ApplOptions struct {
@@ -67,11 +60,26 @@ type ApplOptions struct {
 	ImageGenerateThreshold        int                      `yaml:"image_generate_threshold"`
 	CheckPendingOperationSchedule string                   `yaml:"check_pending_cron"`
 	ScanImageFolderSchedule       string                   `yaml:"scan_image_cron"`
-	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
+	IframeImageParameters         IframeImageParameters    `yaml:"iframe_image_parameters"`
 	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
 	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
 	DisabledProviders             []string                 `yaml:"disabled_providers"`
 	PromptsAmount                 int                      `yaml:"prompts_amount"`
+}
+
+func defaultConfig() ApplOptions {
+	ifp := IframeImageParameters{ImageWeight: 350, ImageHeight: 480, FitThreshold: 0.03}
+
+	return ApplOptions{
+		CheckPendingOperationSchedule: "* * * * *",
+		ScanImageFolderSchedule:       "0 0 * * *",
+		ImageLimitMin:                 1000,
+		ImageLimitMax:                 2000,
+		OriginalImageLimitMin:         1000,
+		OriginalImageLimitMax:         2000,
+		PromptsAmount:                 10,
+		IframeImageParameters:         ifp,
+	}
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -174,8 +182,14 @@ func NewImgSrv(port string) *ImgSrv {
 
 	// Создание провайдеров
 
+	imgPrmt := imageprocessor.ImageParameters{
+		ImageHeight:  options.IframeImageParameters.ImageHeight,
+		ImageWeight:  options.IframeImageParameters.ImageWeight,
+		FitThreshold: options.IframeImageParameters.FitThreshold,
+	}
+
 	if !utils.Contains(options.DisabledProviders, "ydArt") && options.ProvidersOptions.YdArtOptions != nil {
-		ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
+		ydArt := ydart.NewYdArt(imgPrmt, promptManager, logger, options.ProvidersOptions.YdArtOptions)
 		iYdArt := (opermanager.ImageProvider)(ydArt)
 		err = iYdArt.SetImageParameters(&imageParameters)
 		if err != nil {
@@ -186,7 +200,7 @@ func NewImgSrv(port string) *ImgSrv {
 		operMng.AddImageProvider(&iYdArt)
 	}
 	if !utils.Contains(options.DisabledProviders, "lim") && options.ProvidersOptions.LimOptions != nil {
-		lim, err := localimageprovider.NewLim(logger, options.ProvidersOptions.LimOptions)
+		lim, err := localimageprovider.NewLim(imgPrmt, logger, options.ProvidersOptions.LimOptions)
 		if err != nil {
 			logger.Error("Error create lim provider: %v", err)
 			panic(fmt.Sprintf("error create lim provider: %v", err))
@@ -322,35 +336,8 @@ func (app *ImgSrv) Stop() {
 
 func readOptions() (ApplOptions, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
-	var data ApplOptions
-	//err := json.Unmarshal(plan, &data)
+	data := defaultConfig()
 	err := yaml.Unmarshal(plan, &data)
-
-	if data.CheckPendingOperationSchedule == "" {
-		data.CheckPendingOperationSchedule = checkPendingOperationScheduleDefault
-	}
-
-	if data.ScanImageFolderSchedule == "" {
-		data.ScanImageFolderSchedule = scanImageFolderScheduleDefault
-	}
-
-	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
-		data.ImageLimitMin = imageLimitMinDefault
-		data.ImageLimitMax = imageLimitMaxDefault
-	}
-
-	if data.OriginalImageLimitMax == 0 || data.OriginalImageLimitMin == 0 {
-		data.OriginalImageLimitMin = originalImageLimitMinDefault
-		data.OriginalImageLimitMax = originalImageLimitMaxDefault
-	}
-
-	if data.PromptsAmount == 0 {
-		data.PromptsAmount = promptsAmountDefault
-	}
-
-	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {
-		data.IframeImageParameters = &IframeImageParameters{ImageWeight: imageWeightDefault, ImageHeight: imageHeightDefault}
-	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {
 		panic("Option image_amount_min must be lower then image_amount_max")

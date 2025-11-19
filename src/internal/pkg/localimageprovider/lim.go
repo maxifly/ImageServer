@@ -31,7 +31,7 @@ type LimOptions struct {
 	LocalImageFolder       string `yaml:"local_image_folder"`
 }
 
-func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
+func NewLim(imageParameters imageprocessor.ImageParameters, logger *slog.Logger, options *LimOptions) (*Lim, error) {
 	var dm *dirmanager.DirManager = nil
 
 	if len(options.LocalImageFolder) > 0 {
@@ -47,7 +47,7 @@ func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 		logger:   logger,
 		actioner: actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		dm:       dm,
-		ipr:      imageprocessor.NewIpr(logger),
+		ipr:      imageprocessor.NewIpr(imageParameters, logger),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  false,
 			IsNeedSaveLocalFiles: false,

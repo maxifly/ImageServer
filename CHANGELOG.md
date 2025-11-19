@@ -1,11 +1,15 @@
 # Changelog
 
+## 1.05.0
+
+- Fit and pad image mode.  [#19](https://github.com/maxifly/ImageServer/issues/19)
+
 ## 1.04.0
 
 - Save image in original size.  [#9](https://github.com/maxifly/ImageServer/issues/9)
 - Add local image provider. [#13](https://github.com/maxifly/ImageServer/issues/13), [#15](https://github.com/maxifly/ImageServer/issues/15)
 - Fix clear directory. [#18](https://github.com/maxifly/ImageServer/issues/18)
-- 
+
 ## 1.03.0
   **ТРЕБУЕТСЯ ПРОШИТЬ РАМКУ**: версией 1.03
 - Use https.  [#4](https://github.com/maxifly/ImageServer/issues/4)
