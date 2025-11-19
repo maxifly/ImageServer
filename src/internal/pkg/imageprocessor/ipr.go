@@ -30,64 +30,66 @@ func NewIpr(imageParameters ImageParameters, logger *slog.Logger) *Ipr {
 		imageParameters: imageParameters}
 }
 
-func (ipr *Ipr) ProcessImageFromFile(fileName string, fileNameOriginalSize string, sourceFile string, targetW, targetH int) error {
-	imgBytes, err := os.ReadFile(sourceFile)
+func (ipr *Ipr) ConvertImageFileToJpg(filePath string) ([]byte, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("error when read file %v", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
-	//return ipr.ProcessImageFromSLice(fileName, fileNameOriginalSize, imgBytes, targetW, targetH)
-	fit, original, err := ipr.ProcessImageFromSLice(imgBytes, targetW, targetH, len(fileNameOriginalSize) > 0)
+	// Определяем формат
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		ipr.logger.Error("Error process image from slice", "err", err)
-		return err
+		return nil, fmt.Errorf("failed to decode image config: %w", err)
 	}
 
-	err = writeFile(fileName, fit)
+	if format == "jpeg" {
+		return data, nil // исходные байты — JPEG, возвращаем как есть
+	}
+
+	// Иначе декодируем и перекодируем
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		ipr.logger.Error("Error save fit file", "filePath", fileName, "err", err)
-		return err
+		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 
-	if original != nil {
-		err = writeFile(fileNameOriginalSize, original)
-		if err != nil {
-			ipr.logger.Error("Error save original file", "filePath", fileNameOriginalSize, "err", err)
-			return err
-		}
+	encoded, err := encodeJPEG(img)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	return encoded, nil
 }
 
-func (ipr *Ipr) ProcessImageFromBase64(fileName string, fileNameOriginalSize string, imageBase64 string, targetW, targetH int) error {
+func (ipr *Ipr) ConvertBase64ToJpg(imageBase64 string) ([]byte, error) {
 	// Декодирование Base64
 	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
 	if err != nil {
-		return fmt.Errorf("error when decode Base64: %v", err)
+		return nil, fmt.Errorf("error when decode Base64: %v", err)
 	}
 
-	fit, original, err := ipr.ProcessImageFromSLice(imgBytes, targetW, targetH, len(fileNameOriginalSize) > 0)
+	// Определяем формат
+	_, format, err := image.DecodeConfig(bytes.NewReader(imgBytes))
 	if err != nil {
-		ipr.logger.Error("Error process image from slice", "err", err)
-		return err
+		return nil, fmt.Errorf("failed to decode image config: %w", err)
 	}
 
-	err = writeFile(fileName, fit)
+	if format == "jpeg" {
+		return imgBytes, nil // исходные байты — JPEG, возвращаем как есть
+	}
+
+	// Декодируем изображение из байтов
+	src, _, err := image.Decode(bytes.NewReader(imgBytes))
 	if err != nil {
-		ipr.logger.Error("Error save fit file", "filePath", fileName, "err", err)
-		return err
+		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 
-	if original != nil {
-		err = writeFile(fileNameOriginalSize, original)
-		if err != nil {
-			ipr.logger.Error("Error save original file", "filePath", fileNameOriginalSize, "err", err)
-			return err
-		}
+	//TODO Повторяющийся код. Может в один объеденить?
+	encoded, err := encodeJPEG(src)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	return encoded, nil
 }
 
 // ProcessImageFromSLice  Обрабатывает изображение из массива. Ответ: (fit, original, error)
@@ -177,14 +179,4 @@ func encodeJPEG(img image.Image) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func writeFile(filePath string, src []byte) error {
-	// Просто пишем байты в файл — никакой дополнительной обработки не нужно!
-	err := os.WriteFile(filePath, src, 0644)
-	if err != nil {
-
-		return err
-	}
-	return nil
 }

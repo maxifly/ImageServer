@@ -1,8 +1,12 @@
 # Changelog
 
 ## 1.05.0
+**НАЧИНАЯ С ЭТОЙ ВЕРСИИ ХРАНЯТСЯ И ИСПОЛЬЗУЮТСЯ ТОЛЬКО ИЗОБРАЖЕНИЯ ОРИГИНАЛЬНОГО РАЗМЕРА!!!**
+Если для Вас важно сохранить старые изображения и вы использовали версии ДО 1.03.0, 
+то перенесите недостающие файлы из каталога scalable в original
 
-- Fit and pad image mode.  [#19](https://github.com/maxifly/ImageServer/issues/19)
+- Fit and pad image mode.  [#19](https://github.com/maxifly/ImageServer/issues/19
+- Save only original image size. [#17](https://github.com/maxifly/ImageServer/issues/17
 
 ## 1.04.0
 

@@ -99,13 +99,16 @@ func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, er
 	return "lim_operation_id", fmt.Errorf("can not generate image by prompt")
 }
 
-func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error) {
+func (lim *Lim) GetImageSlice(operationId string) (bool, []byte, error) {
 	sourceFile := lim.dm.GetRandomFile()
-	err := lim.ipr.ProcessImageFromFile(filename, "", sourceFile, lim.imageParameters.Weight, lim.imageParameters.Height)
+
+	jpg, err := lim.ipr.ConvertImageFileToJpg(sourceFile)
 	if err != nil {
-		return false, err
+		lim.logger.Error("Error converting image to jpg", "error", err, "file", sourceFile)
+		return true, nil, err
 	}
-	return true, nil
+
+	return true, jpg, nil
 }
 
 func (lim *Lim) IsReadyForRequest() bool {

@@ -46,8 +46,12 @@ func createRedImage(w, h int) image.Image {
 // TestNewIpr создаёт экземпляр Ipr для тестов
 func newTestIpr() *Ipr {
 	return &Ipr{
-		threshold: 0.02,
-		logger:    slog.Default(),
+		imageParameters: ImageParameters{
+			ImageHeight:  100,
+			ImageWeight:  100,
+			FitThreshold: 0.02,
+		},
+		logger: slog.Default(),
 	}
 }
 
@@ -176,8 +180,12 @@ func TestIpr_ProcessImage_InvalidInput(t *testing.T) {
 // ========================================
 func TestIpr_ProcessImage_SmallRatioDiff_ResizeWithoutPadding(t *testing.T) {
 	ipr := &Ipr{
-		threshold: 0.1, // 10% — большой порог
-		logger:    slog.Default(),
+		imageParameters: ImageParameters{
+			ImageHeight:  100,
+			ImageWeight:  100,
+			FitThreshold: 0.1,
+		},
+		logger: slog.Default(),
 	}
 
 	// Исходное: 1000x800 (ratio=1.25), целевое: 500x410 (ratio≈1.22) → diff ≈ 2.4% < 10%
