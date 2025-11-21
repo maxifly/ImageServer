@@ -31,7 +31,7 @@ type LimOptions struct {
 	LocalImageFolder       string `yaml:"local_image_folder"`
 }
 
-func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
+func NewLim(imageParameters imageprocessor.ImageParameters, logger *slog.Logger, options *LimOptions) (*Lim, error) {
 	var dm *dirmanager.DirManager = nil
 
 	if len(options.LocalImageFolder) > 0 {
@@ -47,7 +47,7 @@ func NewLim(logger *slog.Logger, options *LimOptions) (*Lim, error) {
 		logger:   logger,
 		actioner: actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		dm:       dm,
-		ipr:      imageprocessor.NewIpr(logger),
+		ipr:      imageprocessor.NewIpr(imageParameters, logger),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  false,
 			IsNeedSaveLocalFiles: false,
@@ -99,13 +99,16 @@ func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, er
 	return "lim_operation_id", fmt.Errorf("can not generate image by prompt")
 }
 
-func (lim *Lim) GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error) {
+func (lim *Lim) GetImageSlice(operationId string) (bool, []byte, error) {
 	sourceFile := lim.dm.GetRandomFile()
-	err := lim.ipr.ProcessImageFromFile(filename, "", sourceFile, lim.imageParameters.Weight, lim.imageParameters.Height)
+
+	jpg, err := lim.ipr.ConvertImageFileToJpg(sourceFile)
 	if err != nil {
-		return false, err
+		lim.logger.Error("Error converting image to jpg", "error", err, "file", sourceFile)
+		return true, nil, err
 	}
-	return true, nil
+
+	return true, jpg, nil
 }
 
 func (lim *Lim) IsReadyForRequest() bool {

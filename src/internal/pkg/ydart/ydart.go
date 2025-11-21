@@ -88,7 +88,7 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
+func NewYdArt(imageParameters imageprocessor.ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
 	soptions, err := readSecretOptions()
 	if err != nil {
 		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
@@ -101,7 +101,7 @@ func NewYdArt(promptManager *promptmanager.PromptManager, logger *slog.Logger, o
 		options:       options,
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
-		ipr:           imageprocessor.NewIpr(logger),
+		ipr:           imageprocessor.NewIpr(imageParameters, logger),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  true,
 			IsNeedSaveLocalFiles: true,
@@ -184,37 +184,37 @@ func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string
 	return response.Id, nil
 }
 
-func (ydArt *YdArt) GetImage(operationId string, filename string, filenameOriginalSize string) (bool, error) {
+func (ydArt *YdArt) GetImageSlice(operationId string) (bool, []byte, error) {
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
 	err := ydArt.innerRequest("GET", url, http.StatusOK, nil, &response)
 	if err != nil {
 		resultError := fmt.Errorf("error when get image: %v", err)
-		return false, resultError
+		return false, nil, resultError
 	}
 
 	if response.Done {
 		if response.Error != "" {
 			resultError := fmt.Errorf("error from YandexArt: %s", response.Error)
 			ydArt.logger.Error("YandexArt error", "errorCode", response.ErrorCode, "error", response.Error, "detail", response.ErrorDetails)
-			return true, resultError
+			return true, nil, resultError
 		}
 		if response.Response.Image != "" {
-			err := ydArt.ipr.ProcessImageFromBase64(filename, filenameOriginalSize, response.Response.Image, ydArt.imageParameters.Weight, ydArt.imageParameters.Height)
+			imageData, err := ydArt.ipr.ConvertBase64ToJpg(response.Response.Image)
 			if err != nil {
 				resultError := fmt.Errorf("error image processing: %v", err)
 				ydArt.logger.Error(resultError.Error())
-				return false, resultError
+				return false, nil, resultError
 			}
-			return true, nil
+			return true, imageData, nil
 		} else {
 			resultError := fmt.Errorf("field image is empty")
-			return false, resultError
+			return false, nil, resultError
 		}
 	}
 	// Задача не завершена
-	return false, nil
+	return false, nil, nil
 }
 
 func (ydArt *YdArt) IsReadyForRequest() bool {

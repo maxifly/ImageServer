@@ -16,8 +16,11 @@ type ImageProvider interface {
 	GetImageProviderCode() string
 	Generate(isDirectCall bool) (string, error)
 	GenerateWithPrompt(prompt string, isDirectCall bool) (string, error)
-	GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error)
+	// GetImageSlice Возвращаёт бинарный массив в формате JPEG
+	GetImageSlice(operationId string) (bool, []byte, error)
 	IsReadyForRequest() bool
 	SetImageParameters(parameters *ImageParameters) error
 	GetProperties() *ProviderProperties
+
+	//GetImage(operationId string, filename string, fileNameOriginalSize string) (bool, error)
 }

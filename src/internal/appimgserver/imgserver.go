@@ -7,6 +7,7 @@ import (
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/localimageprovider"
 	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/mylogger"
@@ -22,30 +23,20 @@ import (
 )
 
 const (
-	FILE_PATH_OPTIONS                    = "/data/options.yml"
-	refreshLocalImageProviderSchedule    = "30 * * * *"
-	checkPendingOperationScheduleDefault = "* * * * *"
-	scanImageFolderScheduleDefault       = "0 0 * * *"
-	imageLimitMinDefault                 = 1000
-	imageLimitMaxDefault                 = 2000
-	originalImageLimitMinDefault         = 1000
-	originalImageLimitMaxDefault         = 2000
-	imageHeightDefault                   = 480
-	imageWeightDefault                   = 320
-	promptsAmountDefault                 = 10
+	FILE_PATH_OPTIONS                 = "/data/options.yml"
+	refreshLocalImageProviderSchedule = "30 * * * *"
 )
 
 type ImgSrv struct {
-	options            ApplOptions
-	logger             *slog.Logger
-	restObj            *rest.Rest
-	dirManager         *dirmanager.DirManager
-	dirManagerOriginal *dirmanager.DirManager
-	operManager        *opermanager.OperMngr
-	scheduler          gocron.Scheduler
-	scheduleLogLevel   gocron.LogLevel
-	metrics            *metrics.AppMetrics
-	lim                *localimageprovider.Lim
+	options          ApplOptions
+	logger           *slog.Logger
+	restObj          *rest.Rest
+	dirManager       *dirmanager.DirManager
+	operManager      *opermanager.OperMngr
+	scheduler        gocron.Scheduler
+	scheduleLogLevel gocron.LogLevel
+	metrics          *metrics.AppMetrics
+	lim              *localimageprovider.Lim
 }
 
 type ProvidersOptions struct {
@@ -53,8 +44,9 @@ type ProvidersOptions struct {
 	LimOptions   *localimageprovider.LimOptions `yaml:"lim"`
 }
 type IframeImageParameters struct {
-	ImageWeight int `yaml:"image_weight"`
-	ImageHeight int `yaml:"image_height"`
+	ImageWeight  int     `yaml:"image_weight"`
+	ImageHeight  int     `yaml:"image_height"`
+	FitThreshold float64 `yaml:"fit_threshold"`
 }
 
 type ApplOptions struct {
@@ -62,16 +54,27 @@ type ApplOptions struct {
 	ImagePath                     string                   `yaml:"image_path"`
 	ImageLimitMin                 int                      `yaml:"image_amount_min"`
 	ImageLimitMax                 int                      `yaml:"image_amount_max"`
-	OriginalImageLimitMin         int                      `yaml:"original_image_amount_min"`
-	OriginalImageLimitMax         int                      `yaml:"original_image_amount_max"`
 	ImageGenerateThreshold        int                      `yaml:"image_generate_threshold"`
 	CheckPendingOperationSchedule string                   `yaml:"check_pending_cron"`
 	ScanImageFolderSchedule       string                   `yaml:"scan_image_cron"`
-	IframeImageParameters         *IframeImageParameters   `yaml:"iframe_image_parameters"`
+	IframeImageParameters         IframeImageParameters    `yaml:"iframe_image_parameters"`
 	SleepTimes                    []*opermanager.SleepTime `yaml:"sleep_time"`
 	ProvidersOptions              *ProvidersOptions        `yaml:"providers"`
 	DisabledProviders             []string                 `yaml:"disabled_providers"`
 	PromptsAmount                 int                      `yaml:"prompts_amount"`
+}
+
+func defaultConfig() ApplOptions {
+	ifp := IframeImageParameters{ImageWeight: 350, ImageHeight: 480, FitThreshold: 0.03}
+
+	return ApplOptions{
+		CheckPendingOperationSchedule: "* * * * *",
+		ScanImageFolderSchedule:       "0 0 * * *",
+		ImageLimitMin:                 1000,
+		ImageLimitMax:                 2000,
+		PromptsAmount:                 10,
+		IframeImageParameters:         ifp,
+	}
 }
 
 func NewImgSrv(port string) *ImgSrv {
@@ -138,24 +141,23 @@ func NewImgSrv(port string) *ImgSrv {
 		panic(fmt.Sprintf("error create PromptManager %v", err))
 	}
 
-	scalableImagePath := filepath.Join(options.ImagePath, "scalable")
 	originalImagePath := filepath.Join(options.ImagePath, "original")
 
-	dirManager, err := dirmanager.NewDirManager(scalableImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
+	dirManager, err := dirmanager.NewDirManager(originalImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
 	if err != nil {
 		logger.Error("Error create DirManager %v", err)
 		panic(fmt.Sprintf("error create DirManager %v", err))
 	}
 
-	dirManagerOriginal, err := dirmanager.NewDirManager(originalImagePath, options.OriginalImageLimitMin, options.OriginalImageLimitMax, logger)
-	if err != nil {
-		logger.Error("Error create DirManager %v", err)
-		panic(fmt.Sprintf("error create DirManager %v", err))
+	imgPrmt := imageprocessor.ImageParameters{
+		ImageHeight:  options.IframeImageParameters.ImageHeight,
+		ImageWeight:  options.IframeImageParameters.ImageWeight,
+		FitThreshold: options.IframeImageParameters.FitThreshold,
 	}
 
 	operMng, err := opermanager.NewOperMngr(options.ImageGenerateThreshold,
-		&imageParameters,
-		options.SleepTimes, dirManager, dirManagerOriginal, appMetrics, logger)
+		imgPrmt,
+		options.SleepTimes, dirManager, appMetrics, logger)
 
 	if err != nil {
 		logger.Error("Error create OperManager %v", err)
@@ -163,19 +165,18 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	imgsrv := ImgSrv{
-		options:            options,
-		logger:             logger,
-		dirManager:         dirManager,
-		dirManagerOriginal: dirManagerOriginal,
-		operManager:        operMng,
-		scheduleLogLevel:   scheduleLogLevel,
-		metrics:            appMetrics,
+		options:          options,
+		logger:           logger,
+		dirManager:       dirManager,
+		operManager:      operMng,
+		scheduleLogLevel: scheduleLogLevel,
+		metrics:          appMetrics,
 	}
 
 	// Создание провайдеров
 
 	if !utils.Contains(options.DisabledProviders, "ydArt") && options.ProvidersOptions.YdArtOptions != nil {
-		ydArt := ydart.NewYdArt(promptManager, logger, options.ProvidersOptions.YdArtOptions)
+		ydArt := ydart.NewYdArt(imgPrmt, promptManager, logger, options.ProvidersOptions.YdArtOptions)
 		iYdArt := (opermanager.ImageProvider)(ydArt)
 		err = iYdArt.SetImageParameters(&imageParameters)
 		if err != nil {
@@ -186,7 +187,7 @@ func NewImgSrv(port string) *ImgSrv {
 		operMng.AddImageProvider(&iYdArt)
 	}
 	if !utils.Contains(options.DisabledProviders, "lim") && options.ProvidersOptions.LimOptions != nil {
-		lim, err := localimageprovider.NewLim(logger, options.ProvidersOptions.LimOptions)
+		lim, err := localimageprovider.NewLim(imgPrmt, logger, options.ProvidersOptions.LimOptions)
 		if err != nil {
 			logger.Error("Error create lim provider: %v", err)
 			panic(fmt.Sprintf("error create lim provider: %v", err))
@@ -218,11 +219,6 @@ func (app *ImgSrv) Start() {
 	err := app.dirManager.Start()
 	if err != nil {
 		app.logger.Error("Error start dirManager", "error", err)
-	}
-
-	err = app.dirManagerOriginal.Start()
-	if err != nil {
-		app.logger.Error("Error start dirManagerOriginal", "error", err)
 	}
 
 	err = app.operManager.Start()
@@ -270,23 +266,6 @@ func (app *ImgSrv) Start() {
 		),
 	)
 
-	// Сканирование каталога с оригинальными изображениями
-	_, err = app.scheduler.NewJob(
-		gocron.CronJob(
-			// standard cron tab parsing
-			app.options.ScanImageFolderSchedule,
-			false,
-		),
-		gocron.NewTask(
-			func() {
-				err := app.dirManagerOriginal.ReadFiles()
-				if err != nil {
-					app.logger.Error("Error when clear original images operation", "err", err)
-				}
-			},
-		),
-	)
-
 	// Обновление данных провайдера локальных изображений
 	if app.lim != nil {
 		app.logger.Debug("Create refresh local image provider task")
@@ -322,42 +301,13 @@ func (app *ImgSrv) Stop() {
 
 func readOptions() (ApplOptions, error) {
 	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
-	var data ApplOptions
-	//err := json.Unmarshal(plan, &data)
+	data := defaultConfig()
 	err := yaml.Unmarshal(plan, &data)
-
-	if data.CheckPendingOperationSchedule == "" {
-		data.CheckPendingOperationSchedule = checkPendingOperationScheduleDefault
-	}
-
-	if data.ScanImageFolderSchedule == "" {
-		data.ScanImageFolderSchedule = scanImageFolderScheduleDefault
-	}
-
-	if data.ImageLimitMax == 0 || data.ImageLimitMin == 0 {
-		data.ImageLimitMin = imageLimitMinDefault
-		data.ImageLimitMax = imageLimitMaxDefault
-	}
-
-	if data.OriginalImageLimitMax == 0 || data.OriginalImageLimitMin == 0 {
-		data.OriginalImageLimitMin = originalImageLimitMinDefault
-		data.OriginalImageLimitMax = originalImageLimitMaxDefault
-	}
-
-	if data.PromptsAmount == 0 {
-		data.PromptsAmount = promptsAmountDefault
-	}
-
-	if data.IframeImageParameters == nil || data.IframeImageParameters.ImageWeight == 0 || data.IframeImageParameters.ImageHeight == 0 {
-		data.IframeImageParameters = &IframeImageParameters{ImageWeight: imageWeightDefault, ImageHeight: imageHeightDefault}
-	}
 
 	if data.ImageLimitMin >= data.ImageLimitMax {
 		panic("Option image_amount_min must be lower then image_amount_max")
 	}
-	if data.OriginalImageLimitMin >= data.OriginalImageLimitMax {
-		panic("Option original_image_amount_min must be lower then original_image_amount_max")
-	}
+
 	return data, err
 }
 

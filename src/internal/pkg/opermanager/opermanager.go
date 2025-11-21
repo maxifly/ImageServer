@@ -6,6 +6,7 @@ import (
 	"image/jpeg"
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
+	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/timerange"
 	"log/slog"
@@ -60,13 +61,14 @@ type OperMngr struct {
 	imageProvidersWithPrompt []*ImageProvider
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
-	dirManagerOrig  *dirmanager.DirManager
 	dirManagerTemp  *dirmanager.DirManager
 	idMutex         *IdMutex
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
-	imageParameters *ImageParameters
-	metrics         *metrics.AppMetrics
+	imageParameters ImageParameters
+	//TODO create
+	ipr     *imageprocessor.Ipr
+	metrics *metrics.AppMetrics
 }
 type OperStatus struct {
 	Status Status
@@ -83,13 +85,11 @@ type Operation struct {
 }
 
 func NewOperMngr(thresholdMinutes int,
-	parameters *ImageParameters,
+	imageParameters imageprocessor.ImageParameters,
 	sleepTimes []*SleepTime,
 	dirManager *dirmanager.DirManager,
-	dirManagerOrig *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
 	logger *slog.Logger) (*OperMngr, error) {
-
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
@@ -103,14 +103,14 @@ func NewOperMngr(thresholdMinutes int,
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
 		dirManager:         dirManager,
-		dirManagerOrig:     dirManagerOrig,
 		dirManagerTemp:     dirManagerTemp,
 		logger:             logger,
 		idMutex:            NewIdMutex(),
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
 		sleepTimes:         sleepTimes,
-		imageParameters:    parameters,
+		imageParameters:    ImageParameters{Height: imageParameters.ImageHeight, Weight: imageParameters.ImageWeight},
 		metrics:            metrics,
+		ipr:                imageprocessor.NewIpr(imageParameters, logger),
 	}
 	return &operMng, nil
 }
@@ -265,16 +265,28 @@ func (op *OperMngr) startOldPictureOperation() (string, error) {
 }
 
 func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture bool) (string, error) {
-
+	id := op.generateId()
 	var file string
 	if getBlackPicture {
 		file = BLACK_FILE_NAME
 	} else {
-		file = op.dirManager.GetRandomFile()
+		originalFile := op.dirManager.GetRandomFile()
+		imgBytes, err := os.ReadFile(originalFile)
+
+		if err != nil {
+			return id, fmt.Errorf("error when read file %v", err)
+		}
+
+		file, err = op.saveFiles(id, imgBytes, false)
+		if err != nil {
+			return id, err
+		}
+
 	}
+
 	op.logger.Info("Start old picture operation", "file", file)
 	operation := Operation{
-		Id:         op.generateId(),
+		Id:         id,
 		ExternalId: "dirManagerOperation",
 		Type:       OldPicture,
 		FileName:   file,
@@ -347,39 +359,62 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		return operation.(*Operation).status, nil
 	}
 	provider := operation.(*Operation).Provider
-	var fileName, fileNameOrig string
 
 	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
 
-	if isNeedSaveLocalFiles {
-		fileName, fileNameOrig = op.generateFileName(id)
-	} else {
-		fileName, fileNameOrig = op.generateTemporaryFileName(id)
-	}
-
-	ydOperationResult, err := (*provider).GetImage(operation.(*Operation).ExternalId, fileName, fileNameOrig)
+	ydOperationResult, imageData, err := (*provider).GetImageSlice(operation.(*Operation).ExternalId)
 	if err != nil {
 		return nil, err
 	}
 
 	if ydOperationResult {
+		op.logger.Debug("Operation completed", "id", operation.(*Operation).Id)
+		operStatus := &OperStatus{Status: StatusDone, Error: ""}
+
+		fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
+		if err != nil {
+			operStatus = &OperStatus{Status: StatusError, Error: err.Error()}
+		}
+
 		op.logger.Debug("Operation completed", "id", operation.(*Operation).Id, "fileName", fileName)
+
 		completeOperation := operation.(*Operation)
-		completeOperation.status = &OperStatus{Status: StatusDone, Error: ""}
+		completeOperation.status = operStatus
 		completeOperation.FileName = fileName
 		op.completeOperations.SetDefault(id, completeOperation)
 		op.pendingOperations.Delete(id)
 
-		if isNeedSaveLocalFiles {
-			op.dirManager.AddFile(fileName)
-			op.dirManagerOrig.AddFile(fileNameOrig)
-		} else {
-			op.dirManagerTemp.AddFile(fileName)
-		}
-
 	}
 
 	return &OperStatus{Status: StatusPending}, nil
+}
+
+func (op *OperMngr) saveFiles(id string, imageData []byte, isNeedSaveLocalFiles bool) (string, error) {
+	if isNeedSaveLocalFiles {
+		fileNameOrig := op.generateFileName(id)
+		err := writeFile(fileNameOrig, imageData)
+		if err != nil {
+			op.logger.Error("Can not save local original file", "error", err)
+		}
+		op.dirManager.AddFile(fileNameOrig)
+	}
+
+	// Сконвертируем изображение к целевому размеру
+
+	fileName := op.generateTemporaryFileName(id)
+
+	fit, _, err := op.ipr.ProcessImageFromSLice(imageData, op.imageParameters.Weight, op.imageParameters.Height, false)
+	if err != nil {
+		return "", err
+	}
+
+	err = writeFile(fileName, fit)
+	if err != nil {
+		return "", err
+	}
+	op.dirManagerTemp.AddFile(fileName)
+
+	return fileName, nil
 }
 
 func (op *OperMngr) GetFileName(id string) (string, error) {
@@ -500,17 +535,26 @@ func (op *OperMngr) generateId() string {
 	return "i" + strconv.Itoa(int(unixSeconds))
 }
 
-func (op *OperMngr) generateFileName(id string) (string, string) {
+func (op *OperMngr) generateFileName(id string) string {
 	unixSeconds := time.Now().Unix()
-	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
 	orig := "f" + strconv.Itoa(int(unixSeconds)) + "-orig.jpeg"
 
-	return filepath.Join(op.dirManager.GetDirectoryPath(), small), filepath.Join(op.dirManagerOrig.GetDirectoryPath(), orig)
+	return filepath.Join(op.dirManager.GetDirectoryPath(), orig)
 }
 
-func (op *OperMngr) generateTemporaryFileName(id string) (string, string) {
+func (op *OperMngr) generateTemporaryFileName(id string) string {
 	unixSeconds := time.Now().Unix()
 	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
 
-	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small), ""
+	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small)
+}
+
+func writeFile(filePath string, src []byte) error {
+	// Просто пишем байты в файл — никакой дополнительной обработки не нужно!
+	err := os.WriteFile(filePath, src, 0644)
+	if err != nil {
+
+		return err
+	}
+	return nil
 }
