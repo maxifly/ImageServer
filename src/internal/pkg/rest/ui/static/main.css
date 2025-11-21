@@ -1,0 +1,23 @@
+body
+{
+    background-color: #ffffff;
+}
+
+.clear{clear:both;}
+
+.error {
+    color: green;
+}
+
+.alert {
+  background-color: #e00;
+  border-radius: 20px;
+  box-sizing: border-box;
+ /* height: 500px; */
+  padding: 20px;
+/*  width: 320px; */
+}
+
+
+
+
