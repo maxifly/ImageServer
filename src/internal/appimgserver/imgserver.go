@@ -143,7 +143,7 @@ func NewImgSrv(port string) *ImgSrv {
 
 	originalImagePath := filepath.Join(options.ImagePath, "original")
 
-	dirManager, err := dirmanager.NewDirManager(originalImagePath, options.ImageLimitMin, options.ImageLimitMax, logger)
+	dirManager, err := dirmanager.NewDirManager(originalImagePath, options.ImageLimitMin, options.ImageLimitMax, "images", appMetrics, logger)
 	if err != nil {
 		logger.Error("Error create DirManager %v", err)
 		panic(fmt.Sprintf("error create DirManager %v", err))
@@ -187,7 +187,7 @@ func NewImgSrv(port string) *ImgSrv {
 		operMng.AddImageProvider(&iYdArt)
 	}
 	if !utils.Contains(options.DisabledProviders, "lim") && options.ProvidersOptions.LimOptions != nil {
-		lim, err := localimageprovider.NewLim(imgPrmt, logger, options.ProvidersOptions.LimOptions)
+		lim, err := localimageprovider.NewLim(imgPrmt, appMetrics, logger, options.ProvidersOptions.LimOptions)
 		if err != nil {
 			logger.Error("Error create lim provider: %v", err)
 			panic(fmt.Sprintf("error create lim provider: %v", err))

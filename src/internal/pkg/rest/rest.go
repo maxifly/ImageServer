@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/helpers"
+	"imgserver/internal/pkg/localimageprovider"
 	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
@@ -14,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -25,62 +27,6 @@ const (
 	METRIC_NEW_PROMPT       = "NEW_PROMPT"
 	METRIC_IMAGE_GET        = "IMAGE_GET"
 )
-
-// Шаблон для веб-страницы
-var indexTemplate = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Image Server Status</title>
-    <script>
-        function sendRequest() {
-            fetch('/internal_function', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({})
-            })
-            .then(response => response.json())
-            .then(data => {
-                if(data.success){
-                    alert('Function executed successfully');
-                } else {
-                    alert('Error: ' + data.error);
-                }
-            })
-            .catch((error) => {
-                console.error('Error:', error);
-            });
-        }
-    </script>
-</head>
-<body>
-    <h1>Image Server Status</h1>
-    <p>Total Requests: {{.TotalRequests}}</p>
-    <p>Total error requests: {{.TotalRequestsError}}</p>
-    <p>Total requests success rate (req per hour): {{.TotalRequestsSuccessRate}}</p>
-    <p>Total requests error rate (req per hour): {{.TotalRequestsErrorRate}}</p>
-    </br>
-    <p>Images Sent: {{.ImagesSentTotal}}</p>
-    <p>Images error sent: {{.ImagesSentError}}</p>
-    <p>Images sent success rate (req per hour): {{.ImagesSentSuccessRate}}</p>
-    <p>Images sent error rate (req per hour): {{.ImagesSentErrorRate}}</p>
-    </br>
-    <p>Yandex art yesterday success: {{.YandexYesterday}}</p>
-    <p>Yandex art today success: {{.YandexToday}}</p>
-
-    </br>
-    <p>Yandex art success: {{.YandexTotal}}</p>
-    <p>Yandex art error: {{.YandexError}}</p>
-    <p>Yandex art success rate (req per hour): {{.YandexSuccessRate}}</p>
-    <p>Yandex art error rate (req per hour): {{.YandexErrorRate}}</p>
-
-
-    <button onclick="sendRequest()">Execute Internal Function</button>
-</body>
-</html>
-`
 
 type Rest struct {
 	logger        *slog.Logger
@@ -109,6 +55,8 @@ func NewRest(port string,
 	}
 
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
+	router.HandleFunc("/index", restObj.handleIndex).Methods("GET")
+	router.HandleFunc("/api/status", restObj.handleStatusAPI).Methods("GET")
 	router.HandleFunc("/operation/start", restObj.handleStartOperation).Methods("POST")
 	router.HandleFunc("/operation/status/{operationId}", restObj.handleGetOperationStatus).Methods("GET")
 	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
@@ -121,40 +69,157 @@ func NewRest(port string,
 }
 
 func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Парсим шаблон
-	tmpl, err := template.New("index").Parse(indexTemplate)
+
+	rest.logger.Info("indexHandler")
+	files := []string{
+		"./internal/pkg/rest/ui/html/index.html",
+		"./internal/pkg/rest/ui/html/base.html",
+	}
+
+	ts, err := template.ParseFiles(files...)
 	if err != nil {
-		rest.logger.Warn("Error parsing template %v", err)
-		http.Error(w, "Error parsing template", http.StatusInternalServerError)
+		rest.logger.Error("Error parse files", "error", err)
+		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 
-	// Выполняем шаблон
+	//alertMessages := make([]AlertMessage, 0)
+	//
+	////alertMessages = append(alertMessages, AlertMessage{
+	////	Message: "Test alert message",
+	////})
+	//
+	//data := StatusResponse{
+	//	AlertMessages: alertMessages,
+	//}
 
+	data := rest.getPageData()
+
+	//type BackupResponse struct {
+	//	IsDarkTheme   bool
+	//	AlertMessages []AlertMessage
+	//	BFiles        []types.BackupFileInfo
+	//	AddonIcons    map[string]string
+	//}
+
+	err = ts.Execute(w, data)
+	if err != nil {
+		rest.logger.Error("Error execute template", "error", err)
+		http.Error(w, "Internal Server Error", 500)
+	}
+
+	//// Парсим шаблон
+	//tmpl, err := template.New("index").Parse(indexTemplate)
+	//if err != nil {
+	//	rest.logger.Warn("Error parsing template %v", err)
+	//	http.Error(w, "Error parsing template", http.StatusInternalServerError)
+	//	return
+	//}
+	//
+	//// Выполняем шаблон
+	//
+	//ydArtMetric := rest.metrics.GetRequestTypeMetricsSafe(opermanager.METRIC_TEMPLATE_OPERATION_START + ydart.ProviderCode)
+	//
+	//err = tmpl.Execute(w, StatusResponse{
+	//	TotalRequests:            rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Total.Count(),
+	//	TotalRequestsError:       rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Errors.Count(),
+	//	TotalRequestsSuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).SuccessRate.Rate15() * 3600.),
+	//	TotalRequestsErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).ErrorRate.Rate15() * 3600.),
+	//	ImagesSentTotal:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Total.Count(),
+	//	ImagesSentError:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Errors.Count(),
+	//	ImagesSentSuccessRate:    helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).SuccessRate.Rate15() * 3600.),
+	//	ImagesSentErrorRate:      helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).ErrorRate.Rate15() * 3600.),
+	//
+	//	YandexTotal:       ydArtMetric.Total.Count(),
+	//	YandexError:       ydArtMetric.Errors.Count(),
+	//	YandexSuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
+	//	YandexErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
+	//
+	//	YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+	//	YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+	//})
+	//
+	//if err != nil {
+	//	http.Error(w, "Error executing template", http.StatusInternalServerError)
+	//	return
+	//}
+}
+
+func (rest *Rest) handleStatusAPI(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Status API")
+	data := rest.getPageData()
+
+	sendJSONResponse(w, http.StatusOK, data)
+	//w.Header().Set("Content-Type", "application/json")
+	//json.NewEncoder(w).Encode(data)
+}
+
+func (rest *Rest) getPageData() StatusResponse {
+	alertMessages := make([]AlertMessage, 0)
+
+	var groups []MetricGroup
+
+	groups = append(groups,
+		MetricGroup{
+			ID:          1,
+			Name:        "Total",
+			TotalCount:  rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Total.Count(),
+			ErrorCount:  rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Errors.Count(),
+			SuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).SuccessRate.Rate15() * 3600.),
+			ErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).ErrorRate.Rate15() * 3600.),
+		})
+
+	groups = append(groups,
+		MetricGroup{
+			ID:          2,
+			Name:        "Image send",
+			TotalCount:  rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Total.Count(),
+			ErrorCount:  rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Errors.Count(),
+			SuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).SuccessRate.Rate15() * 3600.),
+			ErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).ErrorRate.Rate15() * 3600.),
+		})
+
+	var providerGroups []MetricGroup
 	ydArtMetric := rest.metrics.GetRequestTypeMetricsSafe(opermanager.METRIC_TEMPLATE_OPERATION_START + ydart.ProviderCode)
+	providerGroups = append(providerGroups,
+		MetricGroup{
+			ID:          1,
+			Name:        "YandexArt",
+			TotalCount:  ydArtMetric.Total.Count(),
+			ErrorCount:  ydArtMetric.Errors.Count(),
+			SuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
+			ErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
+		})
 
-	err = tmpl.Execute(w, StatusResponse{
-		TotalRequests:            rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Total.Count(),
-		TotalRequestsError:       rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Errors.Count(),
-		TotalRequestsSuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).SuccessRate.Rate15() * 3600.),
-		TotalRequestsErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).ErrorRate.Rate15() * 3600.),
-		ImagesSentTotal:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Total.Count(),
-		ImagesSentError:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Errors.Count(),
-		ImagesSentSuccessRate:    helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).SuccessRate.Rate15() * 3600.),
-		ImagesSentErrorRate:      helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).ErrorRate.Rate15() * 3600.),
+	limMetric := rest.metrics.GetRequestTypeMetricsSafe(opermanager.METRIC_TEMPLATE_OPERATION_START + localimageprovider.ProviderCode)
+	providerGroups = append(providerGroups,
+		MetricGroup{
+			ID:          2,
+			Name:        "LocalImage",
+			TotalCount:  limMetric.Total.Count(),
+			ErrorCount:  limMetric.Errors.Count(),
+			SuccessRate: helpers.RoundToTwoDecimals(limMetric.SuccessRate.Rate15() * 3600.),
+			ErrorRate:   helpers.RoundToTwoDecimals(limMetric.ErrorRate.Rate15() * 3600.),
+		})
 
-		YandexTotal:       ydArtMetric.Total.Count(),
-		YandexError:       ydArtMetric.Errors.Count(),
-		YandexSuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
-		YandexErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
+	fileMetrics := rest.metrics.GetAllFileMetrics()
+	var fileAmounts []FileAmount
 
-		YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
-		YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+	for k, v := range fileMetrics {
+		fileAmounts = append(fileAmounts, FileAmount{k, v.Value()})
+	}
+
+	sort.SliceStable(fileAmounts, func(i, j int) bool {
+		return fileAmounts[i].DirType < fileAmounts[j].DirType
 	})
 
-	if err != nil {
-		http.Error(w, "Error executing template", http.StatusInternalServerError)
-		return
+	return StatusResponse{
+		AlertMessages:   alertMessages,
+		Groups:          groups,
+		ProviderGroups:  providerGroups,
+		FileAmounts:     fileAmounts,
+		YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
+		YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
 	}
 }
 
