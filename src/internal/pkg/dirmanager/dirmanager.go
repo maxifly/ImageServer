@@ -2,6 +2,7 @@ package dirmanager
 
 import (
 	"errors"
+	"imgserver/internal/pkg/metrics"
 	"io/fs"
 	"log/slog"
 	"math/rand"
@@ -27,12 +28,14 @@ type DirManager struct {
 	limitMax      int
 	useCleanup    bool
 	fileMap       map[string]struct{}
+	metricPrefix  string
 	mutex         sync.Mutex
 	logger        *slog.Logger
+	metrics       *metrics.AppMetrics
 }
 
 // NewDirManager создает новый экземпляр DirManager
-func NewDirManager(path string, limitMin int, limitMax int, logger *slog.Logger) (*DirManager, error) {
+func NewDirManager(path string, limitMin int, limitMax int, metricPrefix string, metrics *metrics.AppMetrics, logger *slog.Logger) (*DirManager, error) {
 	manager := &DirManager{
 		directoryPath: path,
 		limitMin:      limitMin,
@@ -41,13 +44,15 @@ func NewDirManager(path string, limitMin int, limitMax int, logger *slog.Logger)
 		logger:        logger,
 		fileList:      []fileInfo{},
 		fileMap:       make(map[string]struct{}),
+		metrics:       metrics,
+		metricPrefix:  metricPrefix,
 	}
 
 	return manager, nil
 }
 
 // NewDirManagerWithoutCleanup создает новый экземпляр DirManager
-func NewDirManagerWithoutCleanup(path string, logger *slog.Logger) (*DirManager, error) {
+func NewDirManagerWithoutCleanup(path string, metricPrefix string, metrics *metrics.AppMetrics, logger *slog.Logger) (*DirManager, error) {
 	manager := &DirManager{
 		directoryPath: path,
 		limitMin:      0,
@@ -56,6 +61,8 @@ func NewDirManagerWithoutCleanup(path string, logger *slog.Logger) (*DirManager,
 		logger:        logger,
 		fileList:      []fileInfo{},
 		fileMap:       make(map[string]struct{}),
+		metrics:       metrics,
+		metricPrefix:  metricPrefix,
 	}
 
 	return manager, nil
@@ -120,6 +127,7 @@ func (dm *DirManager) ReadFiles() error {
 	defer dm.mutex.Unlock()
 	dm.fileList = fileList
 	dm.fileMap = fileMap
+	dm.metrics.SetFileAmount(dm.metricPrefix, int64(len(fileMap)))
 	dm.logger.Debug("Read files ", "path", dm.directoryPath, "fileAmount", len(dm.fileList))
 	return nil
 }
@@ -175,6 +183,8 @@ func (dm *DirManager) AddFile(filename string) error {
 	if len(dm.fileList) > dm.limitMax {
 		dm.innerCleanUp()
 	}
+
+	dm.metrics.SetFileAmount(dm.metricPrefix, int64(len(dm.fileMap)))
 	return nil
 }
 
@@ -184,6 +194,7 @@ func (dm *DirManager) CleanUp() {
 	defer dm.mutex.Unlock()
 
 	dm.innerCleanUp()
+	dm.metrics.SetFileAmount(dm.metricPrefix, int64(len(dm.fileMap)))
 }
 
 func (dm *DirManager) GetFileCount() int {

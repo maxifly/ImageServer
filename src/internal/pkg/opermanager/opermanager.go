@@ -93,7 +93,7 @@ func NewOperMngr(thresholdMinutes int,
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
-	dirManagerTemp, err := dirmanager.NewDirManager(TEMPORARY_IMAGE_DIR, 5, 10, logger)
+	dirManagerTemp, err := dirmanager.NewDirManager(TEMPORARY_IMAGE_DIR, 5, 10, "temp", metrics, logger)
 
 	if err != nil {
 		return nil, err
