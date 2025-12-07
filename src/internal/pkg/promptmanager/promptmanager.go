@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -38,7 +39,7 @@ type PromptManager struct {
 type Prompt struct {
 	Idx          int                 `yaml:"idx"`
 	Prompt       string              `yaml:"prompt"`
-	Negative     *string             `yaml:"negative,omitempty"` // Обратите внимание на указатель и `omitempty`
+	Negative     *string             `yaml:"negative,omitempty"`
 	Placeholders map[string][]string `yaml:"placeholders,omitempty"`
 }
 
@@ -201,7 +202,17 @@ func (pm *PromptManager) readYaml() (*PromptsData, error) {
 }
 
 func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
-	jsonData, err := yaml.Marshal(d)
+
+	// Глубокая копия + сортировка
+	sortedPrompts := deepCopyAndSortPrompts(d.Prompts)
+
+	// Создаём новую структуру для записи (не модифицируем оригинал)
+	dataToWrite := PromptsData{
+		Prompts:            sortedPrompts,
+		GlobalPlaceholders: d.GlobalPlaceholders, // map — передаётся по ссылке, но если не меняете — можно так
+	}
+
+	jsonData, err := yaml.Marshal(&dataToWrite)
 	if err != nil {
 		pm.logger.Error("Can not marshal", err)
 		return fmt.Errorf("can not marshal: %w", err)
@@ -376,4 +387,49 @@ func unionMaps(firstMap, secondMap map[string][]string) map[string][]string {
 
 	return copiedMap
 
+}
+
+// deepCopyPrompt создаёт глубокую копию одного Prompt
+func deepCopyPrompt(p Prompt) Prompt {
+	copied := Prompt{
+		Idx:    p.Idx,
+		Prompt: p.Prompt,
+	}
+
+	// Копируем Negative, если не nil
+	if p.Negative != nil {
+		negCopy := *p.Negative
+		copied.Negative = &negCopy
+	}
+
+	// Копируем Placeholders
+	if p.Placeholders != nil {
+		copied.Placeholders = make(map[string][]string, len(p.Placeholders))
+		for k, v := range p.Placeholders {
+			copied.Placeholders[k] = make([]string, len(v))
+			copy(copied.Placeholders[k], v)
+		}
+	}
+
+	return copied
+}
+
+// deepCopyAndSortPrompts делает глубокую копию и сортирует по Idx
+func deepCopyAndSortPrompts(prompts []Prompt) []Prompt {
+	if prompts == nil {
+		return nil
+	}
+
+	// Глубокая копия
+	copied := make([]Prompt, len(prompts))
+	for i, p := range prompts {
+		copied[i] = deepCopyPrompt(p)
+	}
+
+	// Сортировка по Idx
+	sort.Slice(copied, func(i, j int) bool {
+		return copied[i].Idx < copied[j].Idx
+	})
+
+	return copied
 }

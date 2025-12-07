@@ -2,6 +2,7 @@
 
 ## 1.06.0
 - Add image count statistic.  [#16](https://github.com/maxifly/ImageServer/issues/16
+- Save prompts in idx order.  [#20](https://github.com/maxifly/ImageServer/issues/20
 
 
 ## 1.05.0
