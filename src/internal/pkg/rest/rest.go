@@ -12,9 +12,11 @@ import (
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
 	"imgserver/internal/pkg/ydart"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
@@ -54,9 +56,21 @@ func NewRest(port string,
 		metrics:       metrics,
 	}
 
+	fileServer := http.FileServer(http.Dir("./internal/pkg/rest/ui/static/"))
+	router.PathPrefix("/static/").Handler(http.StripPrefix("/static", fileServer))
+
 	router.HandleFunc("/", restObj.handleIndex).Methods("GET")
 	router.HandleFunc("/index", restObj.handleIndex).Methods("GET")
 	router.HandleFunc("/api/status", restObj.handleStatusAPI).Methods("GET")
+	router.HandleFunc("/api/prompts", restObj.handleGetPromptsPage).Methods("GET")
+	router.HandleFunc("/api/prompts", restObj.handleCreatePrompt).Methods("POST")
+	router.HandleFunc("/api/prompts/{promptId}", restObj.handlePromptByIdApi).Methods("GET", "PUT")
+	router.HandleFunc("/api/prompts/{promptId}", restObj.handleDeletePromptByIdApi).Methods("DELETE")
+	router.HandleFunc("/api/global-placeholders", restObj.handleCreateGlobalPlaceholder).Methods("POST")
+	router.HandleFunc("/api/global-placeholders/{name}", restObj.handleGlobalPlaceholderByIdApi).Methods("GET", "PUT")
+	router.HandleFunc("/api/global-placeholders/{name}", restObj.handleDeleteGlobalPlaceholderByIdApi).Methods("DELETE")
+	router.HandleFunc("/api/generate", restObj.handleGenerateApi).Methods("POST")
+
 	router.HandleFunc("/operation/start", restObj.handleStartOperation).Methods("POST")
 	router.HandleFunc("/operation/status/{operationId}", restObj.handleGetOperationStatus).Methods("GET")
 	router.HandleFunc("/operation/result/{operationId}", restObj.handleGetImage).Methods("GET")
@@ -83,66 +97,13 @@ func (rest *Rest) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//alertMessages := make([]AlertMessage, 0)
-	//
-	////alertMessages = append(alertMessages, AlertMessage{
-	////	Message: "Test alert message",
-	////})
-	//
-	//data := StatusResponse{
-	//	AlertMessages: alertMessages,
-	//}
-
 	data := rest.getPageData()
-
-	//type BackupResponse struct {
-	//	IsDarkTheme   bool
-	//	AlertMessages []AlertMessage
-	//	BFiles        []types.BackupFileInfo
-	//	AddonIcons    map[string]string
-	//}
 
 	err = ts.Execute(w, data)
 	if err != nil {
 		rest.logger.Error("Error execute template", "error", err)
 		http.Error(w, "Internal Server Error", 500)
 	}
-
-	//// Парсим шаблон
-	//tmpl, err := template.New("index").Parse(indexTemplate)
-	//if err != nil {
-	//	rest.logger.Warn("Error parsing template %v", err)
-	//	http.Error(w, "Error parsing template", http.StatusInternalServerError)
-	//	return
-	//}
-	//
-	//// Выполняем шаблон
-	//
-	//ydArtMetric := rest.metrics.GetRequestTypeMetricsSafe(opermanager.METRIC_TEMPLATE_OPERATION_START + ydart.ProviderCode)
-	//
-	//err = tmpl.Execute(w, StatusResponse{
-	//	TotalRequests:            rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Total.Count(),
-	//	TotalRequestsError:       rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).Errors.Count(),
-	//	TotalRequestsSuccessRate: helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).SuccessRate.Rate15() * 3600.),
-	//	TotalRequestsErrorRate:   helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_ALL_WEB).ErrorRate.Rate15() * 3600.),
-	//	ImagesSentTotal:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Total.Count(),
-	//	ImagesSentError:          rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).Errors.Count(),
-	//	ImagesSentSuccessRate:    helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).SuccessRate.Rate15() * 3600.),
-	//	ImagesSentErrorRate:      helpers.RoundToTwoDecimals(rest.metrics.GetRequestTypeMetricsSafe(METRIC_IMAGE_GET).ErrorRate.Rate15() * 3600.),
-	//
-	//	YandexTotal:       ydArtMetric.Total.Count(),
-	//	YandexError:       ydArtMetric.Errors.Count(),
-	//	YandexSuccessRate: helpers.RoundToTwoDecimals(ydArtMetric.SuccessRate.Rate15() * 3600.),
-	//	YandexErrorRate:   helpers.RoundToTwoDecimals(ydArtMetric.ErrorRate.Rate15() * 3600.),
-	//
-	//	YandexYesterday: rest.metrics.GetDailyMetricSafe(time.Now().Add(-time.Duration(24)*time.Hour), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
-	//	YandexToday:     rest.metrics.GetDailyMetricSafe(time.Now(), opermanager.METRIC_TEMPLATE_OPERATION_START+ydart.ProviderCode).Counter.Count(),
-	//})
-	//
-	//if err != nil {
-	//	http.Error(w, "Error executing template", http.StatusInternalServerError)
-	//	return
-	//}
 }
 
 func (rest *Rest) handleStatusAPI(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +113,10 @@ func (rest *Rest) handleStatusAPI(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusOK, data)
 	//w.Header().Set("Content-Type", "application/json")
 	//json.NewEncoder(w).Encode(data)
+}
+
+func (rest *Rest) getPrompts() *promptmanager.PromptsData {
+	return rest.promptManager.GetPromptsData()
 }
 
 func (rest *Rest) getPageData() StatusResponse {
@@ -350,6 +315,22 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	rest.incrRequestMetric(METRIC_IMAGE_GET, false)
 }
 
+// Функция для обработки POST-запросов
+func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Debug("Generate by prompt")
+	var generateReq GenerateByPromptRequest
+	err := json.NewDecoder(r.Body).Decode(&generateReq)
+	if err != nil {
+		rest.logger.Error("Cannot parse body", "error", err)
+		http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
+		return
+	}
+
+	//TODO create
+
+	w.WriteHeader(http.StatusOK)
+}
+
 // Функция для обработки POST-запросов к /operation/start
 func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 
@@ -424,7 +405,7 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		promptValue.Negative = promptReq.Negative
 	}
 
-	err = rest.promptManager.AddNewPrompt(promptValue)
+	_, err = rest.promptManager.AddNewPrompt(promptValue)
 	if err != nil {
 		errorAttrs.Code = "PromptError"
 		errorAttrs.Message = "Can not add new prompt"
@@ -487,6 +468,372 @@ func (rest *Rest) handleGetOperationStatus(w http.ResponseWriter, r *http.Reques
 	sendJSONResponse(w, http.StatusOK, statusResponse)
 }
 
+func (rest *Rest) handleGetPromptsPage(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("getPromptsPage")
+	files := []string{
+		"./internal/pkg/rest/ui/html/prompts.html",
+		"./internal/pkg/rest/ui/html/base.html",
+	}
+	mainName := filepath.Base(files[0])
+
+	ts, err := template.New(mainName).Funcs(template.FuncMap{
+		"jsonify": jsonify,
+	}).ParseFiles(files...)
+
+	if err != nil {
+		rest.logger.Error("Error parse files", "error", err)
+		http.Error(w, "Internal Server Error", 500)
+		return
+	}
+
+	prompts := rest.getPrompts()
+	cards := make([]PromptCardResponse, 0, len(prompts.Prompts))
+
+	rest.logger.Error("***", "len", len(prompts.Prompts))
+
+	for _, p := range prompts.Prompts {
+		card := PromptCardResponse{
+			ID:              p.Idx,
+			Text:            p.Prompt,
+			PlaceholderKeys: JoinMapKeys(p.Placeholders),
+		}
+		cards = append(cards, card)
+		sort.Slice(cards, func(i, j int) bool {
+			return cards[i].ID < cards[j].ID
+		})
+	}
+
+	globalPlaceholders := make([]PlaceholderDetail, 0, len(prompts.GlobalPlaceholders))
+	for gpName, gpv := range prompts.GlobalPlaceholders {
+		gpd := PlaceholderDetail{
+			Name:   gpName,
+			Values: gpv,
+		}
+		globalPlaceholders = append(globalPlaceholders, gpd)
+	}
+
+	data := PromptsPageResponse{
+		Prompts:            cards,
+		GlobalPlaceholders: globalPlaceholders,
+	}
+
+	data.Providers = append(data.Providers, "YdArt")
+
+	rest.logger.Debug("*** cards", "len", len(prompts.Prompts))
+	rest.logger.Debug("*** globalPlaceholders", "len", len(prompts.GlobalPlaceholders))
+
+	err = ts.Execute(w, data)
+	if err != nil {
+		rest.logger.Error("Error execute template", "error", err)
+		http.Error(w, "Internal Server Error", 500)
+	}
+}
+
+func JoinMapKeys(m map[string][]string) []string {
+	if m == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // опционально, но полезно
+	return keys
+}
+func (rest *Rest) handleCreateGlobalPlaceholder(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("Create global placeholder from api")
+
+	var placeholderReq PlaceholderDetail
+	err := json.NewDecoder(r.Body).Decode(&placeholderReq)
+	if err != nil {
+		rest.logger.Error("Cannot parse body", "error", err)
+		http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
+		return
+	}
+
+	err = rest.promptManager.AddGlobalPlaceholder(placeholderReq.Name, placeholderReq.Values)
+	if err != nil {
+		rest.logger.Error("Cannot add global placeholder", "error", err)
+		http.Error(w, "Cannot add global placeholder: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return
+}
+func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
+
+	rest.logger.Info("Create prompt from api")
+
+	var promptReq PromptDetailRequest
+	err := json.NewDecoder(r.Body).Decode(&promptReq)
+	if err != nil {
+		rest.logger.Error("Cannot parse body", "error", err)
+		http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
+		return
+	}
+
+	prompt := promptmanager.Prompt{
+		Idx:      promptReq.ID,
+		Prompt:   promptReq.Text,
+		Negative: promptReq.Negative,
+	}
+
+	if promptReq.Placeholders != nil {
+		placeholders := make(map[string][]string)
+		for _, ph := range promptReq.Placeholders {
+			values := make([]string, 0, len(ph.Values))
+			for _, value := range ph.Values {
+				values = append(values, value)
+			}
+			placeholders[ph.Name] = values
+		}
+		prompt.Placeholders = placeholders
+	}
+
+	newID, err := rest.promptManager.AddNewPrompt(prompt)
+	if err != nil {
+		rest.logger.Error("Cannot add prompt", "error", err)
+		http.Error(w, "Cannot add prompt: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(map[string]int{"ID": newID}); err != nil {
+		log.Printf("Ошибка кодирования JSON: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+	}
+	w.WriteHeader(http.StatusOK)
+	return
+
+	//var input struct {
+	//	Text        string            `json:"Text"`
+	//	Placeholders []PlaceholderDetail `json:"Placeholders"`
+	//}
+	//if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	//	http.Error(w, "Неверный JSON", http.StatusBadRequest)
+	//	return
+	//}
+	//
+	//// Генерация нового ID (например, UUID или ULID)
+	//newID := generateID() // ← реализуй свою логику
+	//
+	//newPrompt := Prompt{
+	//	ID:          newID,
+	//	Text:        input.Text,
+	//	Placeholders: input.Placeholders,
+	//}
+	//
+	//// Сохранение в хранилище
+	//promptStore[newID] = &newPrompt
+	//
+	//// Ответ: можно вернуть ID или весь объект
+	//w.Header().Set("Content-Type", "application/json")
+	//json.NewEncoder(w).Encode(map[string]string{"ID": newID})
+}
+
+func (rest *Rest) handleDeletePromptByIdApi(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("Delete prompt by id")
+	vars := mux.Vars(r)
+	promptIdS, ok := vars["promptId"]
+	if !ok {
+		rest.logger.Error("Prompt id is empty")
+		http.Error(w, "Prompt ID is empty", http.StatusBadRequest)
+		return
+	}
+
+	promptId, err := strconv.Atoi(promptIdS)
+	if err != nil {
+		http.Error(w, "Prompt ID must be integer", http.StatusBadRequest)
+		return
+	}
+
+	err = rest.promptManager.DeletePrompt(promptId)
+	if err != nil {
+		rest.logger.Error("Cannot delete prompt", "error", err)
+		http.Error(w, "Cannot delete prompt: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func (rest *Rest) handleDeleteGlobalPlaceholderByIdApi(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("Delete global placeholder by id")
+	vars := mux.Vars(r)
+
+	placeholderName, ok := vars["name"]
+	if !ok {
+		rest.logger.Error("Placeholder name is empty")
+		http.Error(w, "Placeholder name is empty", http.StatusBadRequest)
+		return
+	}
+
+	err := rest.promptManager.DeleteGlobalPlaceholder(placeholderName)
+
+	if err != nil {
+		rest.logger.Error("Cannot delete global placeholder", "error", err)
+		http.Error(w, "Cannot delete global placeholder: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func (rest *Rest) handleGlobalPlaceholderByIdApi(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("Processing global placeholder by id")
+	vars := mux.Vars(r)
+
+	placeholderName, ok := vars["name"]
+	if !ok {
+		rest.logger.Error("Placeholder name is empty")
+		http.Error(w, "Placeholder name is empty", http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+
+		values, exists := rest.promptManager.GetPlaceholderValuesById(placeholderName)
+		if !exists {
+			http.Error(w, "Placeholder not found", http.StatusNotFound)
+			return
+		}
+
+		result := PlaceholderDetail{
+			Name:   placeholderName,
+			Values: values,
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			log.Printf("Ошибка кодирования JSON: %v", err)
+			http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if r.Method == http.MethodPut {
+		var placeholderReq PlaceholderDetail
+		err := json.NewDecoder(r.Body).Decode(&placeholderReq)
+		if err != nil {
+			rest.logger.Error("Cannot parse body", "error", err)
+			http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
+			return
+		}
+
+		err = rest.promptManager.ChangeGlobalPlaceholder(placeholderReq.Name, placeholderReq.Values)
+		if err != nil {
+			rest.logger.Error("Cannot change global placeholder", "error", err)
+			http.Error(w, "Cannot change global placeholder: "+err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
+
+}
+func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
+	rest.logger.Info("Processing prompt by id")
+	vars := mux.Vars(r)
+
+	promptIdS, ok := vars["promptId"]
+	if !ok {
+		rest.logger.Error("Prompt id is empty")
+		http.Error(w, "Prompt ID is empty", http.StatusBadRequest)
+		return
+	}
+
+	promptId, err := strconv.Atoi(promptIdS)
+	if err != nil {
+		http.Error(w, "Prompt ID must be integer", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+
+		prompt, exists := rest.promptManager.GetPromptById(promptId)
+		if !exists {
+			http.Error(w, "Не найдено", http.StatusNotFound)
+			return
+		}
+
+		placeholders := make([]PlaceholderDetail, 0)
+
+		if prompt.Placeholders != nil {
+			for key, values := range prompt.Placeholders {
+				sort.Strings(values)
+				phd := PlaceholderDetail{
+					Name:   key,
+					Values: values,
+				}
+				placeholders = append(placeholders, phd)
+			}
+			sort.Slice(placeholders, func(i, j int) bool {
+				return placeholders[i].Name < placeholders[j].Name
+			})
+		}
+
+		result := PromptDetail{
+			ID:           prompt.Idx,
+			Text:         prompt.Prompt,
+			Negative:     prompt.Negative,
+			Placeholders: placeholders,
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			log.Printf("Ошибка кодирования JSON: %v", err)
+			http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if r.Method == http.MethodPut {
+		var promptReq PromptDetailRequest
+		err := json.NewDecoder(r.Body).Decode(&promptReq)
+		if err != nil {
+			rest.logger.Error("Cannot parse body", "error", err)
+			http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
+			return
+		}
+
+		prompt := promptmanager.Prompt{
+			Idx:      promptReq.ID,
+			Prompt:   promptReq.Text,
+			Negative: promptReq.Negative,
+		}
+
+		if promptReq.Placeholders != nil {
+			placeholders := make(map[string][]string)
+			for _, ph := range promptReq.Placeholders {
+				values := make([]string, 0, len(ph.Values))
+				for _, value := range ph.Values {
+					values = append(values, value)
+				}
+				placeholders[ph.Name] = values
+			}
+			prompt.Placeholders = placeholders
+		}
+
+		err = rest.promptManager.ChangePrompt(prompt)
+		if err != nil {
+			rest.logger.Error("Cannot change prompt", "error", err)
+			http.Error(w, "Cannot change prompt: "+err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
+}
+
 // Универсальная функция для отправки JSON-ответов
 func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -527,4 +874,12 @@ func (rest *Rest) incrRequestMetric(metricType string, isError bool) {
 		rest.metrics.IncrementSuccessRequest(metricType)
 	}
 
+}
+
+func jsonify(v interface{}) template.JS {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return template.JS("null")
+	}
+	return template.JS(data)
 }

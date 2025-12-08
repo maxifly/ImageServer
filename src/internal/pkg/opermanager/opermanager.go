@@ -156,6 +156,10 @@ func (op *OperMngr) Start() error {
 	return nil
 }
 
+//func (op *OperMngr) AddOperationIntoQueue(providerCode string, prompt *promptmanager.Prompt) error {
+//
+//}
+
 func (op *OperMngr) StartOperation(optype string, prompt string) (string, error) {
 	//op.metrics.TotalRequests.Inc(1)
 	if optype == "ydart" {
@@ -311,7 +315,7 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt strin
 
 	if prompt != "" {
 		op.logger.Debug("Start provider operation with prompt")
-		externalId, err = (*provider).GenerateWithPrompt(strings.Trim(prompt, " "), isDirectCall)
+		externalId, err = (*provider).GenerateByParameters(GenerationParameters{PromptText: strings.Trim(prompt, " ")}, isDirectCall)
 	} else {
 		externalId, err = (*provider).Generate(isDirectCall)
 	}

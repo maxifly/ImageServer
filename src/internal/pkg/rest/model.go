@@ -1,6 +1,8 @@
 package rest
 
-import "imgserver/internal/pkg/opermanager"
+import (
+	"imgserver/internal/pkg/opermanager"
+)
 
 type ImageResultResponse struct {
 	Image string `json:"image"`
@@ -84,4 +86,42 @@ type OperationStatusResponse struct {
 	ID     string             `json:"id"`
 	Status opermanager.Status `json:"status"`
 	Error  ErrorAttributes    `json:"error,omitempty"`
+}
+
+type PromptCardResponse struct {
+	ID              int
+	Text            string
+	Negative        string
+	PlaceholderKeys []string // только названия: ["name", "role", ...]
+}
+
+type PromptsPageResponse struct {
+	AlertMessages      []AlertMessage `json:"alerts"`
+	Prompts            []PromptCardResponse
+	GlobalPlaceholders []PlaceholderDetail
+	Providers          []string
+}
+
+type PlaceholderDetail struct {
+	Name   string   `json:"Name"`
+	Values []string `json:"Values"`
+}
+
+type PromptDetail struct {
+	ID           int                 `json:"ID"`
+	Text         string              `json:"Text"`
+	Negative     *string             `json:"Negative,omitempty"`
+	Placeholders []PlaceholderDetail `json:"Placeholders"`
+}
+
+type PromptDetailRequest struct {
+	ID           int                 `json:"ID"`
+	Text         string              `json:"Text"`
+	Negative     *string             `json:"Negative,omitempty"`
+	Placeholders []PlaceholderDetail `json:"Placeholders"`
+}
+
+type GenerateByPromptRequest struct {
+	PromptID int64  `json:"PromptID"`
+	Provider string `json:"Provider"`
 }

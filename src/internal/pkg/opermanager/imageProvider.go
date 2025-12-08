@@ -10,12 +10,17 @@ type ProviderProperties struct {
 	IsNeedSaveLocalFiles bool
 }
 
+type GenerationParameters struct {
+	PromptText   string
+	NegativeText *string
+}
+
 type ImageProvider interface {
 	Start() error
 	GetImageProviderForImageServerName() string
 	GetImageProviderCode() string
 	Generate(isDirectCall bool) (string, error)
-	GenerateWithPrompt(prompt string, isDirectCall bool) (string, error)
+	GenerateByParameters(parameters GenerationParameters, isDirectCall bool) (string, error)
 	// GetImageSlice Возвращаёт бинарный массив в формате JPEG
 	GetImageSlice(operationId string) (bool, []byte, error)
 	IsReadyForRequest() bool
