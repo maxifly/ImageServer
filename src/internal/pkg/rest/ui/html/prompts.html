@@ -231,8 +231,8 @@
         select.innerHTML = '';
         GLOBAL_PROVIDERS.forEach(provider => {
             const option = document.createElement('option');
-            option.value = provider;
-            option.textContent = provider;
+            option.value = provider.Code;
+            option.textContent = provider.Name; 
             select.appendChild(option);
         });
     }

@@ -13,8 +13,10 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -53,6 +55,11 @@ type SleepTime struct {
 	BlackImageMode bool                 `yaml:"black_image_mode"`
 }
 
+type NextGenerationData struct {
+	GenerationParameters *GenerationParameters
+	Provider             string
+}
+
 type OperMngr struct {
 	pendingOperations        *cache.Cache
 	completeOperations       *cache.Cache
@@ -66,9 +73,10 @@ type OperMngr struct {
 	actioner        *actioner.Actioner
 	sleepTimes      []*SleepTime
 	imageParameters ImageParameters
-	//TODO create
-	ipr     *imageprocessor.Ipr
-	metrics *metrics.AppMetrics
+	ipr             *imageprocessor.Ipr
+	metrics         *metrics.AppMetrics
+	nextGeneration  *NextGenerationData
+	mutexNG         sync.Mutex
 }
 type OperStatus struct {
 	Status Status
@@ -156,21 +164,59 @@ func (op *OperMngr) Start() error {
 	return nil
 }
 
-//func (op *OperMngr) AddOperationIntoQueue(providerCode string, prompt *promptmanager.Prompt) error {
-//
-//}
+func (op *OperMngr) GetProviders() []Provider {
+	result := make([]Provider, 0, len(op.imageProviders))
+	for _, p := range op.imageProviders {
+		result = append(result, Provider{Code: (*p).GetImageProviderCode(), Name: (*p).GetImageProviderForImageServerName()})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name > result[j].Name
+	})
+
+	return result
+}
+
+func (op *OperMngr) AddOperationIntoQueue(providerCode string, parameters GenerationParameters) error {
+	op.mutexNG.Lock()
+	defer op.mutexNG.Unlock()
+	op.nextGeneration = &NextGenerationData{Provider: providerCode, GenerationParameters: &parameters}
+	return nil
+}
 
 func (op *OperMngr) StartOperation(optype string, prompt string) (string, error) {
 	//op.metrics.TotalRequests.Inc(1)
-	if optype == "ydart" {
+	next, ok := op.dequeue()
+	if ok {
+		// В очереди есть операция. Это самый приоритетный вариант
+		op.logger.Info("Start queued operation")
+		return op.startQueueOperation(next)
+	} else if optype == "ydart" {
+		// Запрошена явная генерация внешним провайдером
 		op.logger.Info("Start direct provider operation")
 		provider := op.getImageProvider(len(prompt) > 0)
-		return op.startProviderOperation(provider, prompt, true)
+
+		var genParameters *GenerationParameters = nil
+		if len(prompt) > 0 {
+			genParameters = createGenerationParameters(prompt)
+		}
+		return op.startProviderOperation(provider, genParameters, true)
 	} else if optype == "old" {
+		// Запрошено старое изображение
 		return op.startOldPictureOperation()
 	}
+
 	return op.startAutoOperation()
 
+}
+
+func (op *OperMngr) getImageProviderByCode(providerCode string) (*ImageProvider, bool) {
+	for _, p := range op.imageProviders {
+		if (*p).GetImageProviderCode() == providerCode {
+			return p, true
+		}
+	}
+	return nil, false
 }
 
 func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
@@ -246,7 +292,7 @@ func (op *OperMngr) startAutoOperation() (string, error) {
 			// Вызываем менеджер старых изображений
 			return op.startOldPictureOperation()
 		}
-		operation, err := op.startProviderOperation(provider, "", false)
+		operation, err := op.startProviderOperation(provider, nil, false)
 		if err != nil {
 			return "", err
 		}
@@ -305,7 +351,18 @@ func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture 
 
 }
 
-func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt string, isDirectCall bool) (string, error) {
+func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error) {
+	op.logger.Info("Start queue operation")
+	provider, ok := op.getImageProviderByCode(data.Provider)
+	if !ok {
+		return "", fmt.Errorf("provider not found/ Code: %s", data.Provider)
+	}
+
+	return op.startProviderOperation(provider, data.GenerationParameters, true)
+
+}
+
+func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameters *GenerationParameters, isDirectCall bool) (string, error) {
 	op.logger.Info("Start provider operation", "isDirectCall", isDirectCall)
 
 	providerMetric := op.metrics.GetRequestTypeMetricsSafe(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
@@ -313,9 +370,9 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, prompt strin
 	var externalId string
 	var err error
 
-	if prompt != "" {
+	if genParameters != nil {
 		op.logger.Debug("Start provider operation with prompt")
-		externalId, err = (*provider).GenerateByParameters(GenerationParameters{PromptText: strings.Trim(prompt, " ")}, isDirectCall)
+		externalId, err = (*provider).GenerateByParameters(*genParameters, isDirectCall)
 	} else {
 		externalId, err = (*provider).Generate(isDirectCall)
 	}
@@ -553,6 +610,19 @@ func (op *OperMngr) generateTemporaryFileName(id string) string {
 	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small)
 }
 
+func (op *OperMngr) dequeue() (*NextGenerationData, bool) {
+	op.mutexNG.Lock()
+	defer op.mutexNG.Unlock()
+
+	if op.nextGeneration != nil {
+		nxt := op.nextGeneration
+		op.nextGeneration = nil
+		return nxt, true
+	}
+
+	return nil, false
+}
+
 func writeFile(filePath string, src []byte) error {
 	// Просто пишем байты в файл — никакой дополнительной обработки не нужно!
 	err := os.WriteFile(filePath, src, 0644)
@@ -561,4 +631,8 @@ func writeFile(filePath string, src []byte) error {
 		return err
 	}
 	return nil
+}
+
+func createGenerationParameters(prompt string) *GenerationParameters {
+	return &GenerationParameters{PromptText: strings.Trim(prompt, " ")}
 }

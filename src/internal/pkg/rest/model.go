@@ -95,11 +95,16 @@ type PromptCardResponse struct {
 	PlaceholderKeys []string // только названия: ["name", "role", ...]
 }
 
+type ProviderInfo struct {
+	Code string `json:"Code"`
+	Name string `json:"Name"` // удобочитаемое название
+}
+
 type PromptsPageResponse struct {
 	AlertMessages      []AlertMessage `json:"alerts"`
 	Prompts            []PromptCardResponse
 	GlobalPlaceholders []PlaceholderDetail
-	Providers          []string
+	Providers          []ProviderInfo
 }
 
 type PlaceholderDetail struct {
@@ -122,6 +127,6 @@ type PromptDetailRequest struct {
 }
 
 type GenerateByPromptRequest struct {
-	PromptID int64  `json:"PromptID"`
+	PromptID int    `json:"PromptID"`
 	Provider string `json:"Provider"`
 }

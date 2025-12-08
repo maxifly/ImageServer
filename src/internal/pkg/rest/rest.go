@@ -326,8 +326,25 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//TODO create
+	prompt, ok := rest.promptManager.GetPromptById(generateReq.PromptID)
+	if !ok {
+		rest.logger.Error("Cannot find prompt", "id", generateReq.PromptID)
+		http.Error(w, "Cannot find prompt", http.StatusUnprocessableEntity)
+		return
+	}
 
+	promptValue := rest.promptManager.GetPromptValue(prompt)
+
+	err = rest.operMng.AddOperationIntoQueue(generateReq.Provider,
+		opermanager.GenerationParameters{
+			PromptText:   promptValue.Prompt,
+			NegativeText: promptValue.Negative,
+		})
+	if err != nil {
+		rest.logger.Error("Cannot add prompt into queue", "error", err)
+		http.Error(w, "Cannot generate", http.StatusUnprocessableEntity)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -517,10 +534,12 @@ func (rest *Rest) handleGetPromptsPage(w http.ResponseWriter, r *http.Request) {
 		GlobalPlaceholders: globalPlaceholders,
 	}
 
-	data.Providers = append(data.Providers, "YdArt")
+	for _, p := range rest.operMng.GetProviders() {
+		data.Providers = append(data.Providers, ProviderInfo{Code: p.Code, Name: p.Name})
+	}
 
-	rest.logger.Debug("*** cards", "len", len(prompts.Prompts))
-	rest.logger.Debug("*** globalPlaceholders", "len", len(prompts.GlobalPlaceholders))
+	rest.logger.Debug("cards", "len", len(prompts.Prompts))
+	rest.logger.Debug("globalPlaceholders", "len", len(prompts.GlobalPlaceholders))
 
 	err = ts.Execute(w, data)
 	if err != nil {
@@ -607,30 +626,6 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	return
 
-	//var input struct {
-	//	Text        string            `json:"Text"`
-	//	Placeholders []PlaceholderDetail `json:"Placeholders"`
-	//}
-	//if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-	//	http.Error(w, "Неверный JSON", http.StatusBadRequest)
-	//	return
-	//}
-	//
-	//// Генерация нового ID (например, UUID или ULID)
-	//newID := generateID() // ← реализуй свою логику
-	//
-	//newPrompt := Prompt{
-	//	ID:          newID,
-	//	Text:        input.Text,
-	//	Placeholders: input.Placeholders,
-	//}
-	//
-	//// Сохранение в хранилище
-	//promptStore[newID] = &newPrompt
-	//
-	//// Ответ: можно вернуть ID или весь объект
-	//w.Header().Set("Content-Type", "application/json")
-	//json.NewEncoder(w).Encode(map[string]string{"ID": newID})
 }
 
 func (rest *Rest) handleDeletePromptByIdApi(w http.ResponseWriter, r *http.Request) {
