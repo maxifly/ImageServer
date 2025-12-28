@@ -1,0 +1,582 @@
+{{template "base" .}}
+{{define "scripts"}}
+<link rel="stylesheet" type="text/css" href="/static/prompts.css">
+
+{{end}}
+
+{{define "title"}}<h1>Prompts</h1>{{end}}
+{{define "main"}}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <button id="createPromptBtn" class="btn btn-success">+ Новый промпт</button>
+</div>
+<!-- Список карточек -->
+<div class="row row-cols-1 g-3 mb-5">
+    {{range .Prompts}}
+    <div class="col">
+        <div class="card prompt-card clickable-card" data-id="{{.ID}}">
+            <div class="card-body">
+                {{if .Text}}
+                <p class="card-text mb-1">
+                    {{slice .Text 0 (printf "%.100s" .Text | len)}}
+                    {{if gt (len .Text) 100}}…{{end}}
+                </p>
+                {{else}}
+                <p class="card-text text-muted mb-1">[Без текста]</p>
+                {{end}}
+
+                {{if .Negative}}
+                <p class="card-text text-muted small mb-1">
+                    ⛔ Negative:
+                    {{slice .Negative 0 (printf "%.50s" .Negative | len)}}
+                    {{if gt (len .Negative) 50}}…{{end}}
+                </p>
+                {{end}}
+
+                {{if .PlaceholderKeys}}
+                <div class="mt-1">
+                    {{range .PlaceholderKeys}}
+                    <span class="badge bg-light text-dark border me-1">{ {{.}} }</span>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+
+<!-- Глобальные плейсхолдеры -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Глобальные плейсхолдеры</h2>
+    <button id="createGlobalPlaceholderBtn" class="btn btn-primary">+ Добавить глобальный</button>
+</div>
+
+<div class="row row-cols-1 g-2 mb-5">
+    {{range .GlobalPlaceholders}}
+    <div class="col">
+        <div class="card global-placeholder-card clickable-card" data-name="{{.Name}}">
+            <div class="card-body">
+                <h6 class="mb-1">{ {{.Name}} }</h6>
+                <small class="text-muted">
+                    {{ $values := .Values }}
+                    {{ $total := len $values }}
+                    {{ $limit := 3 }}
+                    {{ range $i, $v := $values }}
+                    {{ if lt $i $limit }}
+                    {{ if $i }}, {{ end }}
+                    {{ slice $v 0 (printf "%.30s" $v | len) }}
+                    {{ if gt (len $v) 30 }}…{{ end }}
+                    {{ end }}
+                    {{ end }}
+                    {{ if gt $total $limit }}, ...{{ end }}
+                </small>
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+
+<!-- Модалка: промпт -->
+<div class="modal fade" id="promptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Промпт</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="viewMode">
+                    <p><strong>Текст:</strong></p>
+                    <pre id="viewPromptText" class="prompt-full-text"></pre>
+
+                    <p class="mt-3"><strong>Negative:</strong></p>
+                    <pre id="viewNegativeText" class="prompt-full-text text-muted">—</pre>
+
+                    <p class="mt-3"><strong>Плейсхолдеры:</strong></p>
+                    <div id="viewPlaceholders">
+                        <em>Нет плейсхолдеров</em>
+                    </div>
+
+                    <div class="mt-3">
+                        <button id="generateBtn" class="btn btn-success me-2">⚡ Генерировать</button>
+                        <button id="editBtn" class="btn btn-primary me-2">✏️ Редактировать</button>
+                        <button id="deletePromptBtn" class="btn btn-outline-danger">🗑️ Удалить промпт</button>
+                    </div>
+                </div>
+
+                <div id="editMode" style="display: none;">
+                    <div class="mb-3">
+                        <label class="form-label">Текст промпта</label>
+                        <textarea id="editPromptText" class="form-control" rows="4"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Negative (опционально)</label>
+                        <textarea id="editNegativeText" class="form-control" rows="2" placeholder="Если нужно, укажите negative-часть"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Плейсхолдеры</label>
+                        <div id="editPlaceholdersContainer" class="border p-3 rounded bg-light">
+                            <em>Нет плейсхолдеров</em>
+                        </div>
+                        <button id="addPlaceholderBtn" class="btn btn-outline-primary btn-sm mt-2">
+                            + Добавить плейсхолдер
+                        </button>
+                        <small class="form-text text-muted d-block mt-1">
+                            Каждое значение — с новой строки
+                        </small>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button id="cancelEditBtn" class="btn btn-secondary">Отмена</button>
+                        <button id="savePromptBtn" class="btn btn-success">Сохранить</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка: выбор провайдера -->
+<div class="modal fade" id="providerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Выберите провайдера</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Провайдер</label>
+                    <select id="providerSelect" class="form-select">
+                        <!-- Заполнится из JS -->
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button id="confirmProviderBtn" class="btn btn-success">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка: глобальный плейсхолдер (без изменений) -->
+<div class="modal fade" id="globalPlaceholderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="globalModalTitle">Глобальный плейсхолдер</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="globalViewMode">
+                    <p><strong>Ключ:</strong> <code id="globalViewName"></code></p>
+                    <p><strong>Значения:</strong></p>
+                    <pre id="globalViewValues" class="prompt-full-text bg-light"></pre>
+
+                    <button id="editGlobalBtn" class="btn btn-primary mt-3">✏️ Редактировать</button>
+                    <button id="deleteGlobalBtn" class="btn btn-outline-danger ms-2 mt-3">🗑️ Удалить</button>
+                </div>
+
+                <div id="globalEditMode" style="display: none;">
+                    <div class="mb-3">
+                        <label class="form-label">Ключ</label>
+                        <input type="text" id="globalEditName" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Значения (по строке)</label>
+                        <textarea id="globalEditValues" class="form-control" rows="5"></textarea>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button id="cancelGlobalEditBtn" class="btn btn-secondary">Отмена</button>
+                        <button id="saveGlobalBtn" class="btn btn-success">Сохранить</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{{end}}
+
+{{define "bottom_scripts"}}
+<script>
+    // === Встраиваем список провайдеров из Go ===
+    const GLOBAL_PROVIDERS = {{.Providers | jsonify}};
+
+    // === Общие переменные ===
+    let currentPrompt = null;
+    let isCreatingPrompt = false;
+    let currentGlobalPlaceholder = null;
+    let isCreatingGlobal = false;
+
+    // === Утилита: форматирование ошибки из fetch ===
+    async function formatErrorMessage(response) {
+        let message = `Ошибка ${response.status}`;
+        try {
+            const text = await response.text();
+            if (text.trim()) {
+                message += `: ${text.trim()}`;
+            }
+        } catch (e) {}
+        return message;
+    }
+
+    // === 1. Модалка: выбор провайдера для генерации ===
+    function populateProviderSelect() {
+        const select = document.getElementById('providerSelect');
+        select.innerHTML = '';
+        GLOBAL_PROVIDERS.forEach(provider => {
+            const option = document.createElement('option');
+            option.value = provider.Code;
+            option.textContent = provider.Name; 
+            select.appendChild(option);
+        });
+    }
+
+    document.getElementById('generateBtn')?.addEventListener('click', () => {
+        if (!currentPrompt?.ID) return;
+        populateProviderSelect();
+        new bootstrap.Modal(document.getElementById('providerModal')).show();
+    });
+
+    document.getElementById('confirmProviderBtn')?.addEventListener('click', async () => {
+        const provider = document.getElementById('providerSelect').value;
+        if (!provider) {
+            alert('Выберите провайдера');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    PromptID: currentPrompt.ID,
+                    Provider: provider
+                })
+            });
+
+            if (!res.ok) {
+                const errorMsg = await formatErrorMessage(res);
+                throw new Error(errorMsg);
+            }
+
+            alert('Генерация запущена успешно!');
+            
+            bootstrap.Modal.getInstance(document.getElementById('providerModal')).hide();
+        } catch (err) {
+            alert('Ошибка генерации:\n' + err.message);
+        }
+    });
+
+    // === 2. Управление промптами ===
+    document.querySelectorAll('.prompt-card').forEach(card => {
+        card.addEventListener('click', async () => {
+            const id = card.dataset.id;
+            try {
+                const res = await fetch(`/api/prompts/${encodeURIComponent(id)}`);
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+                currentPrompt = await res.json();
+                isCreatingPrompt = false;
+                renderViewMode();
+                new bootstrap.Modal(document.getElementById('promptModal')).show();
+            } catch (err) {
+                alert('Не удалось загрузить промпт:\n' + err.message);
+            }
+        });
+    });
+
+    document.getElementById('createPromptBtn').addEventListener('click', () => {
+        isCreatingPrompt = true;
+        currentPrompt = null;
+        renderEditMode();
+        new bootstrap.Modal(document.getElementById('promptModal')).show();
+    });
+
+    function renderViewMode() {
+        document.getElementById('viewMode').style.display = 'block';
+        document.getElementById('editMode').style.display = 'none';
+        document.getElementById('viewPromptText').textContent = currentPrompt?.Text || '';
+
+        const negEl = document.getElementById('viewNegativeText');
+        if (currentPrompt?.hasOwnProperty('Negative') && currentPrompt.Negative) {
+            negEl.textContent = currentPrompt.Negative;
+            negEl.style.display = 'block';
+        } else {
+            negEl.textContent = '—';
+            negEl.style.display = 'block';
+        }
+
+        const phDiv = document.getElementById('viewPlaceholders');
+        const phs = currentPrompt?.Placeholders || [];
+        if (!phs.length) {
+            phDiv.innerHTML = '<em>Нет плейсхолдеров</em>';
+        } else {
+            phDiv.innerHTML = '';
+            phs.forEach(ph => {
+                const name = ph.Name || '???';
+                const vals = (ph.Values || []).join(', ');
+                phDiv.innerHTML += `<p><strong>${name}:</strong> ${vals}</p>`;
+            });
+        }
+    }
+
+    function renderEditMode() {
+        document.getElementById('viewMode').style.display = 'none';
+        document.getElementById('editMode').style.display = 'block';
+
+        const delBtn = document.getElementById('deletePromptBtn');
+        if (delBtn) delBtn.style.display = isCreatingPrompt ? 'none' : 'inline-block';
+
+        if (isCreatingPrompt) {
+            document.getElementById('editPromptText').value = '';
+            document.getElementById('editNegativeText').value = '';
+            document.getElementById('editPlaceholdersContainer').innerHTML = '<em>Нет плейсхолдеров</em>';
+        } else {
+            document.getElementById('editPromptText').value = currentPrompt.Text || '';
+            const neg = currentPrompt.hasOwnProperty('Negative') ? (currentPrompt.Negative || '') : '';
+            document.getElementById('editNegativeText').value = neg;
+            const container = document.getElementById('editPlaceholdersContainer');
+            container.innerHTML = '';
+            const phs = currentPrompt.Placeholders || [];
+            if (phs.length === 0) {
+                container.innerHTML = '<em>Нет плейсхолдеров</em>';
+            } else {
+                phs.forEach(ph => {
+                    const valsStr = (ph.Values || []).join('\n');
+                    container.innerHTML += renderPlaceholderEditor(ph.Name, valsStr, false);
+                });
+            }
+        }
+    }
+
+    function renderPlaceholderEditor(name, valuesStr, isNew = false) {
+        return `
+      <div class="placeholder-item border-bottom pb-2 mb-2">
+        <div class="d-flex gap-2 align-items-start">
+          <input type="text" class="form-control form-control-sm placeholder-name"
+                 placeholder="Ключ" value="${name}" ${isNew ? '' : 'readonly'}>
+          <button type="button" class="btn btn-sm btn-outline-danger remove-placeholder">&times;</button>
+        </div>
+        <textarea class="form-control form-control-sm mt-1 placeholder-values" rows="2">${valuesStr}</textarea>
+      </div>
+    `;
+    }
+
+    document.getElementById('editBtn')?.addEventListener('click', renderEditMode);
+    document.getElementById('addPlaceholderBtn')?.addEventListener('click', () => {
+        const container = document.getElementById('editPlaceholdersContainer');
+        if (container.querySelector('em')) container.innerHTML = '';
+        container.innerHTML += renderPlaceholderEditor('', '', true);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('remove-placeholder')) {
+            const item = e.target.closest('.placeholder-item');
+            const name = item.querySelector('.placeholder-name').value.trim() || 'без названия';
+            if (confirm(`Удалить плейсхолдер «{${name}}»?`)) {
+                item.remove();
+                const c = document.getElementById('editPlaceholdersContainer');
+                if (c.querySelectorAll('.placeholder-item').length === 0) {
+                    c.innerHTML = '<em>Нет плейсхолдеров</em>';
+                }
+            }
+        }
+    });
+
+    document.getElementById('deletePromptBtn')?.addEventListener('click', async () => {
+        if (!currentPrompt?.ID) return;
+        if (!confirm(`Удалить промпт?\nID: ${currentPrompt.ID}`)) return;
+        try {
+            const res = await fetch(`/api/prompts/${encodeURIComponent(currentPrompt.ID)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const errorMsg = await formatErrorMessage(res);
+                throw new Error(errorMsg);
+            }
+            bootstrap.Modal.getInstance(document.getElementById('promptModal')).hide();
+            alert('Удалено.');
+            location.reload();
+        } catch (err) {
+            alert('Ошибка удаления:\n' + err.message);
+        }
+    });
+
+    document.getElementById('cancelEditBtn')?.addEventListener('click', () => {
+        if (isCreatingPrompt) {
+            bootstrap.Modal.getInstance(document.getElementById('promptModal')).hide();
+        } else {
+            renderViewMode();
+        }
+    });
+
+    document.getElementById('savePromptBtn')?.addEventListener('click', async () => {
+        const text = document.getElementById('editPromptText').value.trim();
+        if (!text) { alert('Текст обязателен'); return; }
+        const negInput = document.getElementById('editNegativeText').value.trim();
+        const negative = negInput === '' ? null : negInput;
+
+        const container = document.getElementById('editPlaceholdersContainer');
+        const items = container.querySelectorAll('.placeholder-item');
+        const placeholders = [];
+        for (const item of items) {
+            const name = item.querySelector('.placeholder-name').value.trim();
+            if (!name) continue;
+            const values = item.querySelector('.placeholder-values').value
+                .split('\n').map(s => s.trim()).filter(s => s);
+            placeholders.push({ Name: name, Values: values });
+        }
+
+        try {
+            if (isCreatingPrompt) {
+                const res = await fetch('/api/prompts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ Text: text, Negative: negative, Placeholders: placeholders })
+                });
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+            } else {
+                const res = await fetch(`/api/prompts/${encodeURIComponent(currentPrompt.ID)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ID: currentPrompt.ID, Text: text, Negative: negative, Placeholders: placeholders })
+                });
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+            }
+            alert(isCreatingPrompt ? 'Создано!' : 'Сохранено!');
+            bootstrap.Modal.getInstance(document.getElementById('promptModal')).hide();
+            location.reload();
+        } catch (err) {
+            alert('Ошибка:\n' + err.message);
+        }
+    });
+
+    // === 3. Управление ГЛОБАЛЬНЫМИ плейсхолдерами ===
+    document.querySelectorAll('.global-placeholder-card').forEach(card => {
+        card.addEventListener('click', async () => {
+            const name = card.dataset.name;
+            try {
+                const res = await fetch(`/api/global-placeholders/${encodeURIComponent(name)}`);
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+                currentGlobalPlaceholder = await res.json();
+                isCreatingGlobal = false;
+                renderGlobalViewMode();
+                new bootstrap.Modal(document.getElementById('globalPlaceholderModal')).show();
+            } catch (err) {
+                alert('Не удалось загрузить глобальный плейсхолдер:\n' + err.message);
+            }
+        });
+    });
+
+    document.getElementById('createGlobalPlaceholderBtn').addEventListener('click', () => {
+        isCreatingGlobal = true;
+        currentGlobalPlaceholder = null;
+        renderGlobalEditMode();
+        document.getElementById('globalModalTitle').textContent = 'Новый глобальный плейсхолдер';
+        new bootstrap.Modal(document.getElementById('globalPlaceholderModal')).show();
+    });
+
+    function renderGlobalViewMode() {
+        document.getElementById('globalViewMode').style.display = 'block';
+        document.getElementById('globalEditMode').style.display = 'none';
+        document.getElementById('globalViewName').textContent = currentGlobalPlaceholder.Name;
+        document.getElementById('globalViewValues').textContent = (currentGlobalPlaceholder.Values || []).join('\n');
+    }
+
+    function renderGlobalEditMode() {
+        document.getElementById('globalViewMode').style.display = 'none';
+        document.getElementById('globalEditMode').style.display = 'block';
+        if (isCreatingGlobal) {
+            document.getElementById('globalEditName').value = '';
+            document.getElementById('globalEditName').readOnly = false;
+            document.getElementById('globalEditValues').value = '';
+            document.getElementById('deleteGlobalBtn').style.display = 'none';
+        } else {
+            document.getElementById('globalEditName').value = currentGlobalPlaceholder.Name;
+            document.getElementById('globalEditName').readOnly = true;
+            document.getElementById('globalEditValues').value = (currentGlobalPlaceholder.Values || []).join('\n');
+            document.getElementById('deleteGlobalBtn').style.display = 'inline-block';
+        }
+    }
+
+    document.getElementById('editGlobalBtn')?.addEventListener('click', renderGlobalEditMode);
+    document.getElementById('cancelGlobalEditBtn')?.addEventListener('click', () => {
+        if (isCreatingGlobal) {
+            bootstrap.Modal.getInstance(document.getElementById('globalPlaceholderModal')).hide();
+        } else {
+            renderGlobalViewMode();
+        }
+    });
+
+    document.getElementById('deleteGlobalBtn')?.addEventListener('click', async () => {
+        if (!currentGlobalPlaceholder?.Name) return;
+        if (!confirm(`Удалить глобальный плейсхолдер «{${currentGlobalPlaceholder.Name}}»?`)) return;
+        try {
+            const res = await fetch(`/api/global-placeholders/${encodeURIComponent(currentGlobalPlaceholder.Name)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const errorMsg = await formatErrorMessage(res);
+                throw new Error(errorMsg);
+            }
+            bootstrap.Modal.getInstance(document.getElementById('globalPlaceholderModal')).hide();
+            alert('Глобальный плейсхолдер удалён.');
+            location.reload();
+        } catch (err) {
+            alert('Ошибка удаления:\n' + err.message);
+        }
+    });
+
+    document.getElementById('saveGlobalBtn')?.addEventListener('click', async () => {
+        const name = document.getElementById('globalEditName').value.trim();
+        if (!name) { alert('Ключ не может быть пустым'); return; }
+        const values = document.getElementById('globalEditValues').value
+            .split('\n').map(s => s.trim()).filter(s => s);
+
+        try {
+            if (isCreatingGlobal) {
+                const res = await fetch('/api/global-placeholders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ Name: name, Values: values })
+                });
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+            } else {
+                const res = await fetch(`/api/global-placeholders/${encodeURIComponent(name)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ Name: name, Values: values })
+                });
+                if (!res.ok) {
+                    const errorMsg = await formatErrorMessage(res);
+                    throw new Error(errorMsg);
+                }
+            }
+            alert(isCreatingGlobal ? 'Глобальный плейсхолдер создан!' : 'Сохранено!');
+            bootstrap.Modal.getInstance(document.getElementById('globalPlaceholderModal')).hide();
+            location.reload();
+        } catch (err) {
+            alert('Ошибка:\n' + err.message);
+        }
+    });
+</script>
+
+
+{{end}}
+

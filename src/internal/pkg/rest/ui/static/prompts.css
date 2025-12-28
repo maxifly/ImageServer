@@ -1,0 +1,33 @@
+.prompt-full-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f8f9fa;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+    margin: 0;
+}
+
+/* Кликабельные карточки */
+.clickable-card {
+    cursor: pointer;
+    transition: box-shadow 0.2s, background-color 0.15s;
+}
+
+.clickable-card:hover {
+    background-color: #f8f9fa;
+    box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.1);
+}
+
+/*.alert {*/
+/*  background-color: #e00;*/
+/*  border-radius: 20px;*/
+/*  box-sizing: border-box;*/
+ /* height: 500px; */
+ /* padding: 20px;*/
+/*  width: 320px; */
+/*}*/
+
+
+
+

@@ -96,7 +96,7 @@ func (lim *Lim) Generate(isDirectCall bool) (string, error) {
 	return "lim_operation_id", nil
 }
 
-func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
+func (lim *Lim) GenerateByParameters(prompt opermanager.GenerationParameters, isDirectCall bool) (string, error) {
 	return "lim_operation_id", fmt.Errorf("can not generate image by prompt")
 }
 

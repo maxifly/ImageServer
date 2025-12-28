@@ -1,8 +1,13 @@
 # Changelog
 
 ## 1.06.0
-- Add image count statistic.  [#16](https://github.com/maxifly/ImageServer/issues/16
-- Save prompts in idx order.  [#20](https://github.com/maxifly/ImageServer/issues/20
+- Add image count statistic.  [#16](https://github.com/maxifly/ImageServer/issues/16)
+- Save prompts in idx order.  [#20](https://github.com/maxifly/ImageServer/issues/20)
+- Add prompts WEB page.  [#21](https://github.com/maxifly/ImageServer/issues/21), 
+[#23](https://github.com/maxifly/ImageServer/issues/23),
+[#24](https://github.com/maxifly/ImageServer/issues/24),
+[#25](https://github.com/maxifly/ImageServer/issues/25),
+[#26](https://github.com/maxifly/ImageServer/issues/26)
 
 
 ## 1.05.0
@@ -10,8 +15,8 @@
 Если для Вас важно сохранить старые изображения и вы использовали версии ДО 1.03.0, 
 то перенесите недостающие файлы из каталога scalable в original
 
-- Fit and pad image mode.  [#19](https://github.com/maxifly/ImageServer/issues/19
-- Save only original image size. [#17](https://github.com/maxifly/ImageServer/issues/17
+- Fit and pad image mode.  [#19](https://github.com/maxifly/ImageServer/issues/19)
+- Save only original image size. [#17](https://github.com/maxifly/ImageServer/issues/17)
 
 ## 1.04.0
 
