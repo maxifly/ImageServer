@@ -26,7 +26,7 @@
     {{range .Groups}}
     {{$bg := "bg-success"}}
     {{if gt .ErrorRate 10.0}}{{$bg = "bg-danger"}}{{end}}
-    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10)}}{{$bg = "bg-warning"}}{{end}}
+    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10.0)}}{{$bg = "bg-warning"}}{{end}}
 
     <div class="col-md-4 mb-4">
         <div class="card metric-card shadow-sm">
@@ -67,7 +67,7 @@
     {{range .ProviderGroups}}
     {{$bg := "bg-success"}}
     {{if gt .ErrorRate 10.0}}{{$bg = "bg-danger"}}{{end}}
-    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10)}}{{$bg = "bg-warning"}}{{end}}
+    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10.0)}}{{$bg = "bg-warning"}}{{end}}
     <div class="row">
     <div class="col-md-4 mb-4">
         <div class="card metric-card shadow-sm">
