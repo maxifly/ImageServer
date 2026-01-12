@@ -1,0 +1,300 @@
+{{template "base" .}}
+{{define "scripts"}} {{end}}
+
+{{define "title"}}<h1>Статистика</h1>{{end}}
+{{define "main"}}
+<h3>Количество сгенерированных изображений</h3>
+<div class="card mb-4">
+    <div class="card-body">
+        <h6 class="card-title">📈 YandexArt</h6>
+        <div class="row">
+            <div class="col">
+                <small class="text-muted">Today</small>
+                <div class="fw-bold" id="yandex-today">{{.YandexToday}}</div>
+            </div>
+            <div class="col">
+                <small class="text-muted">Yesterday</small>
+                <div class="fw-bold" id="yandex-yesterday">{{.YandexYesterday}}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Metric Groups -->
+<h3>Всего запросов</h3>
+<div class="row" id="metrics-container">
+    {{range .Groups}}
+    {{$bg := "bg-success"}}
+    {{if gt .ErrorRate 10.0}}{{$bg = "bg-danger"}}{{end}}
+    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10.0)}}{{$bg = "bg-warning"}}{{end}}
+
+    <div class="col-md-4 mb-4">
+        <div class="card metric-card shadow-sm">
+            <div class="card-header {{$bg}} text-white">
+                <h5 class="mb-0">{{.Name}}</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col"><small class="text-muted">Error</small><div class="fw-bold text-danger">{{.ErrorCount}}</div></div>
+                    <div class="col"><small class="text-muted">Total</small><div class="fw-bold">{{.TotalCount}}</div></div>
+                </div>
+
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between">
+                        <small>Success Rate: <strong>{{printf "%.2f" .SuccessRate}} запросов в час</strong></small>
+                    </div>
+
+            </div>
+
+            <div>
+                <div class="d-flex justify-content-between">
+                    <small>Error Rate: <strong>{{printf "%.2f" .ErrorRate}} запросов в час</strong></small>
+                </div>
+             </div>
+        </div>
+    </div>
+</div>
+{{end}}
+</div>
+
+<div class="row">
+    <h3>Провайдеры</h3>
+</div>
+
+
+<div class="col-md-12 mb-4" id="provider-metrics-container">
+
+    {{range .ProviderGroups}}
+    {{$bg := "bg-success"}}
+    {{if gt .ErrorRate 10.0}}{{$bg = "bg-danger"}}{{end}}
+    {{if and (gt .ErrorRate 5.0) (le .ErrorRate 10.0)}}{{$bg = "bg-warning"}}{{end}}
+    <div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card metric-card shadow-sm">
+            <div class="card-header {{$bg}} text-white">
+                <h5 class="mb-0">{{.Name}}</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col"><small class="text-muted">Error</small><div class="fw-bold text-danger">{{.ErrorCount}}</div></div>
+                    <div class="col"><small class="text-muted">Total</small><div class="fw-bold">{{.TotalCount}}</div></div>
+                </div>
+
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between">
+                        <small>Success Rate: <strong>{{printf "%.2f" .SuccessRate}} запросов в час</strong></small>
+                    </div>
+                </div>
+
+            <div>
+                <div class="d-flex justify-content-between">
+                    <small>Error Rate: <strong>{{printf "%.2f" .ErrorRate}} запросов в час</strong></small>
+                </div>
+             </div>
+        </div>
+    </div>
+</div>
+</div>
+{{end}}
+
+</div>
+
+<div class="row">
+    <h3>Количество файлов</h3>
+</div>
+
+<div class="col-md-12 mb-4">
+
+
+    <div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card metric-card shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">Каталоги</h5>
+            </div>
+            <div class="card-body" id="files-container">
+           {{range .FileAmounts}}
+
+                <div class="row mb-3">
+                    <div class="col-md-3"><small class="text-muted">{{.DirType}}:</small></div>
+                    <div class="col-md-3"><div class="fw-bold">{{.Amount}}</div></div>
+                </div>
+
+           {{end}}
+        </div>
+    </div>
+</div>
+</div>
+
+
+</div>
+
+
+
+
+<small id="last-updated" class="text-muted">Last updated: Just now</small>
+</div>
+
+{{end}}
+
+{{define "bottom_scripts"}}
+
+<script>
+    const container = document.getElementById('metrics-container');
+    const providerContainer = document.getElementById('provider-metrics-container');
+    const filesContainer = document.getElementById('files-container');
+    const yandexTodayEl = document.getElementById('yandex-today');
+    const yandexYesterdayEl = document.getElementById('yandex-yesterday');
+    const lastUpdatedEl = document.getElementById('last-updated');
+
+    function formatTime(date) {
+        return new Intl.DateTimeFormat('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        }).format(date);
+    }
+
+    function updateAlerts(alertMessages) {
+        const container = document.getElementById('alerts-container');
+        if (!container) return;
+
+        if (!alertMessages || alertMessages.length === 0) {
+            container.innerHTML = '<div class="alert alert-success">🟢 No alerts</div>';
+        } else {
+            let html = '';
+            alertMessages.forEach(alert => {
+                html += `<div class="alert alert-danger">${alert.alertMessage}</div>`;
+            });
+            container.innerHTML = html;
+        }
+    }
+
+    async function fetchStatus() {
+        try {
+            const res = await fetch('/api/status');
+            if (!res.ok) throw new Error('Network error');
+            const data = await res.json();
+
+            // Обновляем глобальные поля
+            yandexTodayEl.textContent = data.yandex_today;
+            yandexYesterdayEl.textContent = data.yandex_yesterday;
+
+            // Обновляем алерты
+            updateAlerts(data.alerts);
+
+            // Сортируем группы по ID
+            const groups = [...data.groups].sort((a, b) => (a.id || 0) - (b.id || 0));
+
+            let html = '';
+            groups.forEach(g => {
+                const successCount = g.totalCount - g.errorCount;
+                let bg = 'bg-success';
+                if (g.errorRate > 10) bg = 'bg-danger';
+                else if (g.errorRate > 5) bg = 'bg-warning';
+
+                html += `
+          <div class="col-md-4 mb-4">
+            <div class="card metric-card shadow-sm">
+              <div class="card-header ${bg} text-white">
+                <h5 class="mb-0">${g.name}</h5>
+              </div>
+              <div class="card-body">
+                <div class="row mb-3">
+                  <div class="col"><small class="text-muted">Success</small><div class="fw-bold">${successCount}</div></div>
+                  <div class="col"><small class="text-muted">Error</small><div class="fw-bold text-danger">${g.errorCount}</div></div>
+                  <div class="col"><small class="text-muted">Total</small><div class="fw-bold">${g.totalCount}</div></div>
+                </div>
+
+                <div class="mb-2">
+                  <div class="d-flex justify-content-between">
+                    <small>Success Rate: <strong>${g.successRate.toFixed(2)} запросов в час</strong></small>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="d-flex justify-content-between">
+                    <small>Error Rate: <strong>${g.errorRate.toFixed(2)} запросов в час</strong></small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+            });
+            container.innerHTML = html;
+
+            // Сортируем группы по ID
+            const providerGroups = [...data.providerGroups].sort((a, b) => (a.id || 0) - (b.id || 0));
+
+            html = '';
+            providerGroups.forEach(g => {
+                const successCount = g.totalCount - g.errorCount;
+                let bg = 'bg-success';
+                if (g.errorRate > 10) bg = 'bg-danger';
+                else if (g.errorRate > 5) bg = 'bg-warning';
+
+                html += `
+         <div class="row">
+          <div class="col-md-4 mb-4">
+            <div class="card metric-card shadow-sm">
+              <div class="card-header ${bg} text-white">
+                <h5 class="mb-0">${g.name}</h5>
+              </div>
+              <div class="card-body">
+                <div class="row mb-3">
+                  <div class="col"><small class="text-muted">Error</small><div class="fw-bold text-danger">${g.errorCount}</div></div>
+                  <div class="col"><small class="text-muted">Total</small><div class="fw-bold">${g.totalCount}</div></div>
+                </div>
+
+                <div class="mb-2">
+                  <div class="d-flex justify-content-between">
+                    <small>Success Rate: <strong>${g.successRate.toFixed(2)} запросов в час</strong></small>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="d-flex justify-content-between">
+                    <small>Error Rate: <strong>${g.errorRate.toFixed(2)} запросов в час</strong></small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+         </div>
+        `;
+            });
+
+            providerContainer.innerHTML = html;
+            lastUpdatedEl.textContent = 'Last updated: ' + formatTime(new Date());
+
+
+            html = '';
+            data.fileAmounts.forEach(g => {
+                html += `
+                <div class="row mb-3">
+                    <div class="col-md-3"><small class="text-muted">${g.dirType}:</small></div>
+                    <div class="col-md-3"><div class="fw-bold">${g.amount}</div></div>
+                </div>
+        `;
+            });
+
+            filesContainer.innerHTML = html;
+            lastUpdatedEl.textContent = 'Last updated: ' + formatTime(new Date());
+
+
+
+
+        } catch (err) {
+            console.error('❌ Failed to update status:', err);
+        }
+    }
+
+    // Первое обновление через 1.2 сек
+    setTimeout(fetchStatus, 1200);
+    // Далее — каждые 2 миниуты
+    setInterval(fetchStatus, 120000);
+</script>
+{{end}}
+

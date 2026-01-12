@@ -1,6 +1,8 @@
 package rest
 
-import "imgserver/internal/pkg/opermanager"
+import (
+	"imgserver/internal/pkg/opermanager"
+)
 
 type ImageResultResponse struct {
 	Image string `json:"image"`
@@ -15,21 +17,30 @@ type ImageResponse struct {
 }
 
 // StatusResponse структура для отображения статуса
+
+type AlertMessage struct {
+	Message string `json:"alertMessage"`
+}
+
+type MetricGroup struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	ErrorCount  int64   `json:"errorCount"`
+	TotalCount  int64   `json:"totalCount"`
+	SuccessRate float64 `json:"successRate"`
+	ErrorRate   float64 `json:"errorRate"`
+}
+
+type FileAmount struct {
+	DirType string `json:"dirType"`
+	Amount  int64  `json:"amount"`
+}
+
 type StatusResponse struct {
-	TotalRequests            int64   `json:"total_requests"`
-	TotalRequestsError       int64   `json:"total_requests_errors"`
-	TotalRequestsSuccessRate float64 `json:"total_requests_success_rate"`
-	TotalRequestsErrorRate   float64 `json:"total_requests_errors_rate"`
-
-	ImagesSentTotal       int64   `json:"images_sent_total"`
-	ImagesSentError       int64   `json:"images_sent_error"`
-	ImagesSentSuccessRate float64 `json:"images_sent_success_rate"`
-	ImagesSentErrorRate   float64 `json:"images_sent_error_rate"`
-
-	YandexTotal       int64   `json:"yandex_total"`
-	YandexError       int64   `json:"yandex_error"`
-	YandexSuccessRate float64 `json:"yandex_success_rate"`
-	YandexErrorRate   float64 `json:"yandex_error_rate"`
+	AlertMessages  []AlertMessage `json:"alerts"`
+	Groups         []MetricGroup  `json:"groups"`
+	ProviderGroups []MetricGroup  `json:"providerGroups"`
+	FileAmounts    []FileAmount   `json:"fileAmounts"`
 
 	YandexToday     int64 `json:"yandex_today"`
 	YandexYesterday int64 `json:"yandex_yesterday"`
@@ -75,4 +86,47 @@ type OperationStatusResponse struct {
 	ID     string             `json:"id"`
 	Status opermanager.Status `json:"status"`
 	Error  ErrorAttributes    `json:"error,omitempty"`
+}
+
+type PromptCardResponse struct {
+	ID              int
+	Text            string
+	Negative        string
+	PlaceholderKeys []string // только названия: ["name", "role", ...]
+}
+
+type ProviderInfo struct {
+	Code string `json:"Code"`
+	Name string `json:"Name"` // удобочитаемое название
+}
+
+type PromptsPageResponse struct {
+	AlertMessages      []AlertMessage `json:"alerts"`
+	Prompts            []PromptCardResponse
+	GlobalPlaceholders []PlaceholderDetail
+	Providers          []ProviderInfo
+}
+
+type PlaceholderDetail struct {
+	Name   string   `json:"Name"`
+	Values []string `json:"Values"`
+}
+
+type PromptDetail struct {
+	ID           int                 `json:"ID"`
+	Text         string              `json:"Text"`
+	Negative     *string             `json:"Negative,omitempty"`
+	Placeholders []PlaceholderDetail `json:"Placeholders"`
+}
+
+type PromptDetailRequest struct {
+	ID           int                 `json:"ID"`
+	Text         string              `json:"Text"`
+	Negative     *string             `json:"Negative,omitempty"`
+	Placeholders []PlaceholderDetail `json:"Placeholders"`
+}
+
+type GenerateByPromptRequest struct {
+	PromptID int    `json:"PromptID"`
+	Provider string `json:"Provider"`
 }

@@ -125,10 +125,20 @@ func (ydArt *YdArt) Generate(isDirectCall bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ydArt.GenerateWithPrompt(prompt, isDirectCall)
+
+	return ydArt.generateByPrompt(prompt, isDirectCall)
 }
 
-func (ydArt *YdArt) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
+func (ydArt *YdArt) GenerateByParameters(parameters opermanager.GenerationParameters, isDirectCall bool) (string, error) {
+	prompt := parameters.PromptText
+	if parameters.NegativeText != nil && strings.Trim(*parameters.NegativeText, "") != "" {
+		prompt = prompt + ". Игнорировать следующее: " + *parameters.NegativeText
+	}
+	return ydArt.generateByPrompt(prompt, isDirectCall)
+}
+
+func (ydArt *YdArt) generateByPrompt(prompt string, isDirectCall bool) (string, error) {
+
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is empty")
 	}
@@ -251,7 +261,7 @@ func (ydArt *YdArt) GetProperties() *opermanager.ProviderProperties {
 }
 
 func (ydArt *YdArt) getPrompt() (string, error) {
-	prompt, err := ydArt.promptManager.GetRandomPrompt()
+	prompt, err := ydArt.promptManager.GetRandomPromptValue()
 	if err != nil {
 		ydArt.logger.Error("Error when get prompt", "error", err.Error())
 		ydArt.logger.Debug("Return default prompt", "prompt", "test")

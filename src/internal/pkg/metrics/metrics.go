@@ -16,6 +16,7 @@ type AppMetrics struct {
 	// Карта метрик по типам запросов
 	RequestTypes  map[string]*RequestTypeMetrics
 	DailyCounters map[string]*DailyCounter
+	FileGauge     map[string]metrics.Gauge
 	cleanupPeriod time.Duration
 	ttl           time.Duration
 	ticker        *time.Ticker
@@ -64,6 +65,7 @@ func NewAppMetrics() *AppMetrics {
 	return &AppMetrics{
 		RequestTypes:  make(map[string]*RequestTypeMetrics),
 		DailyCounters: make(map[string]*DailyCounter),
+		FileGauge:     make(map[string]metrics.Gauge),
 		// Устанавливаем время старта
 		StartTime:     time.Now(),
 		ttl:           time.Duration(48) * time.Hour,
@@ -133,6 +135,36 @@ func (m *AppMetrics) GetDailyMetricSafe(metricTime time.Time, metricType string)
 	return metric
 }
 
+func (m *AppMetrics) GetFileMetricSafe(metricType string) metrics.Gauge {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if existing, ok := m.FileGauge[metricType]; ok {
+		return existing
+	}
+
+	// Создаем и регистрируем
+	metric := metrics.NewGauge()
+
+	// Регистрируем с уникальными именами
+	registryName := fmt.Sprintf("app.files.%s", metricType)
+	metrics.GetOrRegister(registryName, metric)
+
+	m.FileGauge[metricType] = metric
+	return metric
+}
+
+func (m *AppMetrics) GetAllFileMetrics() map[string]metrics.Gauge {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make(map[string]metrics.Gauge)
+
+	for key, value := range m.FileGauge {
+		result[key] = value
+	}
+	return result
+}
+
 func (m *AppMetrics) IncrementSuccessRequest(requestType string) {
 	metric := m.GetRequestTypeMetricsSafe(requestType)
 	metric.IncrementSuccessRequest()
@@ -144,6 +176,11 @@ func (m *AppMetrics) IncrementErrorRequest(requestType string) {
 func (m *AppMetrics) IncrementDaily(mType string) {
 	metric := m.GetDailyMetricSafe(time.Now(), mType)
 	metric.Counter.Inc(1)
+}
+
+func (m *AppMetrics) SetFileAmount(mType string, amount int64) {
+	metric := m.GetFileMetricSafe(mType)
+	metric.Update(amount)
 }
 
 func (m *AppMetrics) cleanDaily() {

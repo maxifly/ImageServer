@@ -5,6 +5,7 @@ import (
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
+	"imgserver/internal/pkg/metrics"
 	"imgserver/internal/pkg/opermanager"
 	"log/slog"
 	"time"
@@ -31,11 +32,11 @@ type LimOptions struct {
 	LocalImageFolder       string `yaml:"local_image_folder"`
 }
 
-func NewLim(imageParameters imageprocessor.ImageParameters, logger *slog.Logger, options *LimOptions) (*Lim, error) {
+func NewLim(imageParameters imageprocessor.ImageParameters, metrics *metrics.AppMetrics, logger *slog.Logger, options *LimOptions) (*Lim, error) {
 	var dm *dirmanager.DirManager = nil
 
 	if len(options.LocalImageFolder) > 0 {
-		dm1, err := dirmanager.NewDirManagerWithoutCleanup(options.LocalImageFolder, logger)
+		dm1, err := dirmanager.NewDirManagerWithoutCleanup(options.LocalImageFolder, "localImages", metrics, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +96,7 @@ func (lim *Lim) Generate(isDirectCall bool) (string, error) {
 	return "lim_operation_id", nil
 }
 
-func (lim *Lim) GenerateWithPrompt(prompt string, isDirectCall bool) (string, error) {
+func (lim *Lim) GenerateByParameters(prompt opermanager.GenerationParameters, isDirectCall bool) (string, error) {
 	return "lim_operation_id", fmt.Errorf("can not generate image by prompt")
 }
 

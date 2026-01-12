@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -38,7 +39,7 @@ type PromptManager struct {
 type Prompt struct {
 	Idx          int                 `yaml:"idx"`
 	Prompt       string              `yaml:"prompt"`
-	Negative     *string             `yaml:"negative,omitempty"` // Обратите внимание на указатель и `omitempty`
+	Negative     *string             `yaml:"negative,omitempty"`
 	Placeholders map[string][]string `yaml:"placeholders,omitempty"`
 }
 
@@ -79,7 +80,17 @@ func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) 
 	return pm, nil
 }
 
-func (pm *PromptManager) GetRandomPrompt() (PromptValue, error) {
+func (pm *PromptManager) GetPromptById(id int) (Prompt, bool) {
+	value, exists := pm.prompts[id]
+	if !exists {
+		return Prompt{}, false
+	}
+
+	return value, true
+
+}
+
+func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
@@ -92,7 +103,7 @@ func (pm *PromptManager) GetRandomPrompt() (PromptValue, error) {
 	}
 
 	if keysCount == 1 {
-		return pm.convertToPromptValue(pm.prompts[1]), nil
+		return pm.GetPromptValue(pm.prompts[1]), nil
 	}
 
 	for i := 0; i < maxRetries; i++ {
@@ -101,14 +112,14 @@ func (pm *PromptManager) GetRandomPrompt() (PromptValue, error) {
 
 		value, exists := pm.prompts[randomIndex]
 		if exists {
-			return pm.convertToPromptValue(value), nil
+			return pm.GetPromptValue(value), nil
 		}
 	}
 	pm.logger.Error("Failed to select an existing item after the maximum number of attempts", "maxAttempts", maxRetries)
 	return PromptValue{}, fmt.Errorf("failed to select an existing item after the maximum number of attempts")
 }
 
-func (pm *PromptManager) convertToPromptValue(prompt Prompt) PromptValue {
+func (pm *PromptManager) GetPromptValue(prompt Prompt) PromptValue {
 	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
 		return PromptValue{Prompt: prompt.Prompt, Negative: prompt.Negative}
 	}
@@ -118,13 +129,121 @@ func (pm *PromptManager) convertToPromptValue(prompt Prompt) PromptValue {
 	return PromptValue{Prompt: positive, Negative: prompt.Negative}
 }
 
-func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) error {
+func (pm *PromptManager) AddGlobalPlaceholder(name string, values []string) error {
+
+	_, ok := pm.globalPlaceholders[name]
+	if ok {
+		pm.logger.Error("Global placeholder already exists", "name", name)
+		return fmt.Errorf("global placeholder already exists")
+	}
+
+	unique := getUniqueValues(values)
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	pm.globalPlaceholders[name] = unique
+	err := pm.saveFile()
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func (pm *PromptManager) DeleteGlobalPlaceholder(name string) error {
+
+	_, ok := pm.globalPlaceholders[name]
+	if !ok {
+		pm.logger.Error("Global placeholder not exists", "name", name)
+		return fmt.Errorf("global placeholder not exists")
+	}
+
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+
+	for _, prompt := range pm.prompts {
+		if pm.isPromptUseGlobalPlaceholder(&prompt, name) {
+			pm.logger.Error("Can not delete used global placeholder", "name", name)
+			return fmt.Errorf("global placeholder used by prompt %d", prompt.Idx)
+		}
+	}
+
+	delete(pm.globalPlaceholders, name)
+	err := pm.saveFile()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (pm *PromptManager) isPromptUseGlobalPlaceholder(prompt *Prompt, globalPlaceholderName string) bool {
+	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
+		return false
+	}
+
+	if prompt.Placeholders != nil {
+		_, ok := prompt.Placeholders[globalPlaceholderName]
+		if ok {
+			return false
+		}
+	}
+
+	placeholders := pm.templater.ExtractPlaceholders(prompt.Prompt)
+
+	for _, placeholder := range placeholders {
+		if globalPlaceholderName == placeholder {
+			return true
+		}
+	}
+
+	return false
+
+}
+
+func (pm *PromptManager) ChangeGlobalPlaceholder(name string, values []string) error {
+
+	_, ok := pm.globalPlaceholders[name]
+	if !ok {
+		pm.logger.Error("Global placeholder not exists", "name", name)
+		return fmt.Errorf("global placeholder not exists")
+	}
+
+	unique := getUniqueValues(values)
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	pm.globalPlaceholders[name] = unique
+	err := pm.saveFile()
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func (pm *PromptManager) GetPlaceholderValuesById(name string) ([]string, bool) {
+	values, ok := pm.globalPlaceholders[name]
+	if !ok {
+		pm.logger.Error("Global placeholder not exists", "name", name)
+		return nil, false
+	}
+
+	return values, true
+}
+
+func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) (int, error) {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
 	if pm.existsPromptValue(newPrompt) {
 		pm.logger.Debug("New prompt already exists", "prompt", newPrompt)
-		return fmt.Errorf("new prompt already exists")
+		return 0, fmt.Errorf("new prompt already exists")
+	}
+
+	if !pm.validatePrompt(newPrompt) {
+		pm.logger.Error("Prompt is not valid")
+		return 0, fmt.Errorf("prompt is non valid")
 	}
 
 	// Создаем копию оригинальной карты
@@ -154,6 +273,7 @@ func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) error {
 		}
 
 		// Добавляем новый PromptValue под новым ключом
+		newPrompt.Idx = maxKey
 		newMap[maxKey] = newPrompt
 
 		pm.prompts = newMap
@@ -167,19 +287,98 @@ func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) error {
 		}
 
 		// Добавляем новый элемент с новым ключом
+		newPrompt.Idx = maxKey + 1
 		transformedMap[maxKey+1] = newPrompt
 
 		pm.prompts = transformedMap
 	}
 
 	pm.logger.Debug("Prompts count", "count", len(pm.prompts))
+
+	err := pm.saveFile()
+	if err != nil {
+		pm.logger.Error("can not save new prompts into file", "error", err.Error())
+		return 0, err
+	}
+	return newPrompt.Idx, nil
+}
+func (pm *PromptManager) saveFile() error {
+	pm.logger.Debug("Save prompts into file", "count", len(pm.prompts))
 	prompts := convertMapToPrompts(pm.prompts)
 	err := pm.writeYaml(FILE_PATH_OPTIONS, &PromptsData{Prompts: prompts, GlobalPlaceholders: pm.globalPlaceholders})
 	if err != nil {
-		pm.logger.Error("can not save new prompts into file", err.Error())
+		pm.logger.Error("can not save prompts into file", err.Error())
 		return err
 	}
+
 	return nil
+}
+
+func (pm *PromptManager) ChangePrompt(newPrompt Prompt) error {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+
+	if pm.existsPromptValue(newPrompt) {
+		pm.logger.Warn("Prompt with this data already exists", "prompt", newPrompt)
+		return fmt.Errorf("prompt with this data already exists")
+	}
+
+	if !pm.validatePrompt(newPrompt) {
+		pm.logger.Error("Prompt is not valid")
+		return fmt.Errorf("prompt is non valid")
+	}
+
+	_, ok := pm.prompts[newPrompt.Idx]
+	if !ok {
+		pm.logger.Error("Prompt with this index does not exist", "prompt", newPrompt)
+		return fmt.Errorf("prompt with this index does not exist")
+	}
+
+	pm.prompts[newPrompt.Idx] = newPrompt
+
+	err := pm.saveFile()
+	if err != nil {
+		pm.logger.Error("Can not save prompts into file", "error", err.Error())
+		return fmt.Errorf("can not save prompts into file. %v", err)
+	}
+	return nil
+}
+
+func (pm *PromptManager) DeletePrompt(idx int) error {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	_, ok := pm.prompts[idx]
+	if !ok {
+		pm.logger.Error("Prompt with this index does not exist", "index", idx)
+		return fmt.Errorf("prompt with this index does not exist")
+	}
+
+	newMap := make(PromptMap, len(pm.prompts)-1)
+
+	for key, value := range pm.prompts {
+		if key < idx {
+			newMap[key] = value
+		}
+		if key > idx {
+			value.Idx = key - 1
+			newMap[value.Idx] = value
+		}
+	}
+
+	pm.prompts = newMap
+
+	err := pm.saveFile()
+	if err != nil {
+		pm.logger.Error("can not save prompts into file", "error", err.Error())
+		return fmt.Errorf("can not save prompts into file. %v", err)
+	}
+
+	return nil
+}
+
+func (pm *PromptManager) GetPromptsData() *PromptsData {
+	prompts := convertMapToPrompts(pm.prompts)
+	return &PromptsData{Prompts: prompts, GlobalPlaceholders: pm.globalPlaceholders}
 }
 
 func (pm *PromptManager) readYaml() (*PromptsData, error) {
@@ -201,7 +400,17 @@ func (pm *PromptManager) readYaml() (*PromptsData, error) {
 }
 
 func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
-	jsonData, err := yaml.Marshal(d)
+
+	// Глубокая копия + сортировка
+	sortedPrompts := deepCopyAndSortPrompts(d.Prompts)
+
+	// Создаём новую структуру для записи (не модифицируем оригинал)
+	dataToWrite := PromptsData{
+		Prompts:            sortedPrompts,
+		GlobalPlaceholders: d.GlobalPlaceholders, // map — передаётся по ссылке, но если не меняете — можно так
+	}
+
+	jsonData, err := yaml.Marshal(&dataToWrite)
 	if err != nil {
 		pm.logger.Error("Can not marshal", err)
 		return fmt.Errorf("can not marshal: %w", err)
@@ -260,12 +469,9 @@ func (pm *PromptManager) convertPromptsToMap(prompts []Prompt) PromptMap {
 
 func (pm *PromptManager) existsPromptValue(prompt Prompt) bool {
 	for _, value := range pm.prompts {
-		// Сравниваем Prompt и Negative
-		if value.Prompt == prompt.Prompt {
-			if (value.Negative == nil && prompt.Negative == nil) ||
-				(value.Negative != nil && prompt.Negative != nil && *value.Negative == *prompt.Negative) {
-				return true
-			}
+		if value.isEqual(&prompt) {
+			pm.logger.Debug("equal", "p1", value, "p2", prompt)
+			return true
 		}
 	}
 	return false
@@ -376,4 +582,129 @@ func unionMaps(firstMap, secondMap map[string][]string) map[string][]string {
 
 	return copiedMap
 
+}
+
+// deepCopyPrompt создаёт глубокую копию одного Prompt
+func deepCopyPrompt(p Prompt) Prompt {
+	copied := Prompt{
+		Idx:    p.Idx,
+		Prompt: p.Prompt,
+	}
+
+	// Копируем Negative, если не nil
+	if p.Negative != nil {
+		negCopy := *p.Negative
+		copied.Negative = &negCopy
+	}
+
+	// Копируем Placeholders
+	if p.Placeholders != nil {
+		copied.Placeholders = make(map[string][]string, len(p.Placeholders))
+		for k, v := range p.Placeholders {
+			copied.Placeholders[k] = make([]string, len(v))
+			copy(copied.Placeholders[k], v)
+		}
+	}
+
+	return copied
+}
+
+// deepCopyAndSortPrompts делает глубокую копию и сортирует по Idx
+func deepCopyAndSortPrompts(prompts []Prompt) []Prompt {
+	if prompts == nil {
+		return nil
+	}
+
+	// Глубокая копия
+	copied := make([]Prompt, len(prompts))
+	for i, p := range prompts {
+		copied[i] = deepCopyPrompt(p)
+	}
+
+	// Сортировка по Idx
+	sort.Slice(copied, func(i, j int) bool {
+		return copied[i].Idx < copied[j].Idx
+	})
+
+	return copied
+}
+
+func getUniqueValues(values []string) []string {
+
+	unique := make(map[string]interface{})
+	for _, value := range values {
+		unique[value] = nil
+	}
+
+	result := make([]string, 0, len(unique))
+
+	for v, _ := range unique {
+		result = append(result, v)
+	}
+
+	return result
+}
+
+func (p *Prompt) isEqual(prompt *Prompt) bool {
+	if p.Prompt != prompt.Prompt {
+		return false
+	}
+
+	if (p.Negative != nil && prompt.Negative == nil) ||
+		(p.Negative == nil && prompt.Negative != nil) ||
+		(p.Negative != nil && prompt.Negative != nil && p.Negative != prompt.Negative) {
+		return false
+	}
+
+	if (p.Placeholders != nil && prompt.Placeholders == nil) ||
+		(p.Placeholders == nil && prompt.Placeholders != nil) {
+		return false
+	}
+
+	if p.Placeholders != nil && prompt.Placeholders != nil {
+
+		if len(p.Placeholders) != len(prompt.Placeholders) {
+			return false
+		}
+
+		for k, v := range p.Placeholders {
+
+			pv, ok := prompt.Placeholders[k]
+
+			if !ok {
+				return false
+			}
+
+			if !equalStringSlices(v, pv) {
+				return false
+			}
+		}
+
+	}
+	return true
+}
+
+func equalStringSlices(a, b []string) bool {
+
+	setA := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		setA[s] = struct{}{}
+	}
+
+	setB := make(map[string]struct{}, len(b))
+	for _, s := range b {
+		setB[s] = struct{}{}
+	}
+
+	if len(setA) != len(setB) {
+		return false
+	}
+
+	for kb, _ := range setB {
+		if _, exists := setA[kb]; !exists {
+			return false
+		}
+	}
+
+	return true
 }
