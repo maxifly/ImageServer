@@ -2,7 +2,6 @@ package promptmanager
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/templater"
 	"log/slog"
 	"math/rand"
@@ -10,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type PromptValue struct {
@@ -34,6 +36,7 @@ type PromptManager struct {
 	maxKeys            int
 	logger             *slog.Logger
 	mutex              sync.Mutex
+	rng                *rand.Rand
 }
 
 type Prompt struct {
@@ -55,7 +58,12 @@ const (
 
 func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) {
 
-	pm := &PromptManager{logger: logger, maxKeys: maxKeys, templater: templater.NewTemplateProcessor()}
+	pm := &PromptManager{
+		logger:    logger,
+		maxKeys:   maxKeys,
+		templater: templater.NewTemplateProcessor(),
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
 
 	// Создать файл с примером
 	pm.writeYaml(FILE_PATH_EXAMPLE_OPTIONS, createExamplePrompts())
@@ -108,7 +116,7 @@ func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 
 	for i := 0; i < maxRetries; i++ {
 
-		randomIndex := rand.Intn(keysCount) + 1 // +1, так как ключи начинаются с 1
+		randomIndex := pm.rng.Intn(keysCount) + 1 // +1, так как ключи начинаются с 1
 
 		value, exists := pm.prompts[randomIndex]
 		if exists {

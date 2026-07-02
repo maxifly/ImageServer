@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.07.0
+
+- Sort file list after load
+- Using a separate random number generator to select a file and a template
+
+
 ## 1.06.0
 - Add image count statistic.  [#16](https://github.com/maxifly/ImageServer/issues/16)
 - Save prompts in idx order.  [#20](https://github.com/maxifly/ImageServer/issues/20)

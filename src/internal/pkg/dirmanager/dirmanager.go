@@ -32,6 +32,7 @@ type DirManager struct {
 	mutex         sync.Mutex
 	logger        *slog.Logger
 	metrics       *metrics.AppMetrics
+	rng           *rand.Rand
 }
 
 // NewDirManager создает новый экземпляр DirManager
@@ -46,6 +47,7 @@ func NewDirManager(path string, limitMin int, limitMax int, metricPrefix string,
 		fileMap:       make(map[string]struct{}),
 		metrics:       metrics,
 		metricPrefix:  metricPrefix,
+		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return manager, nil
@@ -63,6 +65,7 @@ func NewDirManagerWithoutCleanup(path string, metricPrefix string, metrics *metr
 		fileMap:       make(map[string]struct{}),
 		metrics:       metrics,
 		metricPrefix:  metricPrefix,
+		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return manager, nil
@@ -123,6 +126,12 @@ func (dm *DirManager) ReadFiles() error {
 		}
 	}
 
+	// Сортируем по имени файла, чтобы порядок был детерминированным
+	// и не зависел от порядка, возвращаемого файловой системой.
+	sort.Slice(fileList, func(i, j int) bool {
+		return fileList[i].Name < fileList[j].Name
+	})
+
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
 	dm.fileList = fileList
@@ -142,7 +151,7 @@ func (dm *DirManager) GetRandomFile() string {
 	if len(dm.fileList) == 0 {
 		return ""
 	}
-	index := rand.Intn(len(dm.fileList))
+	index := dm.rng.Intn(len(dm.fileList))
 	return dm.fileList[index].Name
 }
 
