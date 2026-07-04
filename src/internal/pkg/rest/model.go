@@ -2,6 +2,7 @@ package rest
 
 import (
 	"imgserver/internal/pkg/opermanager"
+	"imgserver/internal/pkg/promptmanager"
 )
 
 type ImageResultResponse struct {
@@ -89,9 +90,10 @@ type OperationStatusResponse struct {
 }
 
 type PromptCardResponse struct {
-	ID              int
+	ID              string
 	Text            string
 	Negative        string
+	UseCount        int64
 	PlaceholderKeys []string // только названия: ["name", "role", ...]
 }
 
@@ -113,20 +115,26 @@ type PlaceholderDetail struct {
 }
 
 type PromptDetail struct {
-	ID           int                 `json:"ID"`
+	ID           string              `json:"ID"`
 	Text         string              `json:"Text"`
 	Negative     *string             `json:"Negative,omitempty"`
 	Placeholders []PlaceholderDetail `json:"Placeholders"`
 }
 
 type PromptDetailRequest struct {
-	ID           int                 `json:"ID"`
+	ID           string              `json:"ID"`
 	Text         string              `json:"Text"`
 	Negative     *string             `json:"Negative,omitempty"`
 	Placeholders []PlaceholderDetail `json:"Placeholders"`
 }
 
 type GenerateByPromptRequest struct {
-	PromptID int    `json:"PromptID"`
+	PromptID string `json:"PromptID"`
 	Provider string `json:"Provider"`
+}
+
+type PromptsData struct {
+	Prompts            []promptmanager.Prompt
+	GlobalPlaceholders map[string][]string
+	PromptStatistic    map[string]promptmanager.PromptStatistic
 }

@@ -102,13 +102,13 @@
 Например
 ```
 prompts:
-    - idx: 1
+    - code: c1
       prompt: '[[color]] робот-человек с крупными [[color]] глазами. Держит в руках [[weapon]]'
       placeholders:
         weapon:
         - автомат
         - бластер
-    - idx: 2
+    - code: prmt_2
       prompt: кукушка
 global_placeholders:
     weapon:
@@ -127,7 +127,7 @@ global_placeholders:
 Структура файла:
 
 * ***prompts*** (список) - список промптов
-    * ***idx*** (число) -  от 1 до N (***задаётся параметром***). Должно быть уникальным. Разрывы не допускаются. Промпт с минимальным индексом считается самым старым.
+    * ***code*** (строка) -  уникальный код промпта. (При создании через REST-запросы формируется автоматически)
     * ***prompt*** (строка) - промпт
     * ***negative*** (строка) - егативная часть промта. (необязательный)
     * ***global_placeholders*** - список плейсхолдеров промпта (необязательный)
@@ -191,6 +191,8 @@ export IMAGE_SERVER_DATA_ROOT=/home/maxim/ImageServerFiles
 * конфигурацию
 * изображения
 * логи
+* базу данных
+* бэкапы базы данных
 3. Перейдите в корневой каталог проекта
 4. Измените права на скрипт генерации сертификата
 
@@ -214,6 +216,8 @@ chmod a+x generate-certs.sh
       - ${IMAGE_SERVER_DATA_ROOT}/data:/data
       - ${IMAGE_SERVER_DATA_ROOT}/images:/images
       - ${IMAGE_SERVER_DATA_ROOT}/log:/log
+      - ${IMAGE_SERVER_DATA_ROOT}/data/db:/data/db
+      - ${IMAGE_SERVER_DATA_ROOT}/data/backups:/data/backups      
 ```
 
 

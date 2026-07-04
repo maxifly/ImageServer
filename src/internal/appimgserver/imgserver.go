@@ -1,11 +1,14 @@
 package appimageserver
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/natefinch/lumberjack"
 	"gopkg.in/yaml.v3"
+	"imgserver/internal/pkg/dbase"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/localimageprovider"
@@ -29,6 +32,7 @@ const (
 
 type ImgSrv struct {
 	options          ApplOptions
+	db               *sql.DB
 	logger           *slog.Logger
 	restObj          *rest.Rest
 	dirManager       *dirmanager.DirManager
@@ -37,6 +41,9 @@ type ImgSrv struct {
 	scheduleLogLevel gocron.LogLevel
 	metrics          *metrics.AppMetrics
 	lim              *localimageprovider.Lim
+
+	backupCancel      context.CancelFunc
+	maintenanceCancel context.CancelFunc
 }
 
 type ProvidersOptions struct {
@@ -77,7 +84,7 @@ func defaultConfig() ApplOptions {
 	}
 }
 
-func NewImgSrv(port string) *ImgSrv {
+func NewImgSrv(port string, db *sql.DB) *ImgSrv {
 
 	options, err := readOptions()
 	if err != nil {
@@ -134,8 +141,9 @@ func NewImgSrv(port string) *ImgSrv {
 	}
 
 	appMetrics := metrics.NewAppMetrics()
+	statisticDao := dbase.NewStatisticDao(db)
 
-	promptManager, err := promptmanager.NewPromptManager(options.PromptsAmount, logger)
+	promptManager, err := promptmanager.NewPromptManager(options.PromptsAmount, statisticDao, logger)
 	if err != nil {
 		logger.Error("Error create PromptManager %v", err)
 		panic(fmt.Sprintf("error create PromptManager %v", err))
@@ -166,6 +174,7 @@ func NewImgSrv(port string) *ImgSrv {
 
 	imgsrv := ImgSrv{
 		options:          options,
+		db:               db,
 		logger:           logger,
 		dirManager:       dirManager,
 		operManager:      operMng,
@@ -214,7 +223,8 @@ func NewImgSrv(port string) *ImgSrv {
 	return &imgsrv
 }
 
-func (app *ImgSrv) Start() {
+func (app *ImgSrv) Start() error {
+	//TODO Надо возвращать ошибки
 	app.metrics.Start()
 	err := app.dirManager.Start()
 	if err != nil {
@@ -291,11 +301,61 @@ func (app *ImgSrv) Start() {
 		app.scheduler.Start()
 	}()
 
+	// Запуск обслуживания БД
+	ctxMaint, cancelMaint := context.WithCancel(context.Background())
+	app.maintenanceCancel = cancelMaint
+	dbase.StartAutoMaintenance(ctxMaint, app.logger, app.db)
+
+	// Бэкапы БД
+	ctxBackup, cancelBackup := context.WithCancel(context.Background())
+	app.backupCancel = cancelBackup
+	dbase.StartAutoBackup(ctxBackup, app.logger, app.db) // или твой путь
+
 	err = app.restObj.Start()
 	app.logger.Error("Error start rest", "error", err)
+
+	return nil
+}
+
+func (app *ImgSrv) StopDbBackgroundTasks() {
+	app.logger.Info("Stopping db background tasks...")
+
+	// Отправляем сигнал отмены во все горутины
+	if app.maintenanceCancel != nil {
+		app.maintenanceCancel()
+	}
+	if app.backupCancel != nil {
+		app.backupCancel()
+	}
+
+	// Даём пару секунд, чтобы текущие операции (например, бэкап) успели завершиться
+	time.Sleep(2 * time.Second)
+	app.logger.Info("Db background tasks stopped")
+}
+
+func (app *ImgSrv) Shutdown(ctx context.Context) error {
+	app.logger.Error("SHUTDOWN")
+
+	app.StopDbBackgroundTasks()
+
+	err := app.restObj.Stop(ctx)
+	if err != nil {
+		app.logger.Error("Rest shutdown failed: %w", err)
+		return fmt.Errorf("Rest shutdown failed: %w", err)
+	}
+
+	app.Stop()
+
+	app.logger.Error("Its not error. Shutting down database...")
+	if err := dbase.ShutdownDB(app.db, app.logger); err != nil {
+		app.logger.Error("DB shutdown failed: %w", err)
+		return fmt.Errorf("DB shutdown failed: %w", err)
+	}
+	return nil
 }
 
 func (app *ImgSrv) Stop() {
+	app.logger.Error("STOP")
 	_ = app.scheduler.Shutdown()
 }
 
