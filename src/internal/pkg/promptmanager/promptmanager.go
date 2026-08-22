@@ -1,12 +1,16 @@
 package promptmanager
 
 import (
+	"context"
 	"fmt"
+	"imgserver/internal/pkg/dbase"
 	"imgserver/internal/pkg/templater"
+	"imgserver/internal/pkg/utils"
 	"log/slog"
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,20 +31,23 @@ func (p PromptValue) String() string {
 	return fmt.Sprintf("Prompt: %s, Negative: %s", p.Prompt, negative)
 }
 
-type PromptMap map[int]Prompt
+type PromptMap map[string]Prompt
 
 type PromptManager struct {
 	prompts            PromptMap
+	promptKeys         []string
 	globalPlaceholders map[string][]string
 	templater          *templater.TemplateProcessor
 	maxKeys            int
 	logger             *slog.Logger
 	mutex              sync.Mutex
 	rng                *rand.Rand
+	statisticDao       *dbase.StatisticDao
 }
 
 type Prompt struct {
-	Idx          int                 `yaml:"idx"`
+	Code         string              `yaml:"code,omitempty"`
+	Idx          *int                `yaml:"idx,omitempty"`
 	Prompt       string              `yaml:"prompt"`
 	Negative     *string             `yaml:"negative,omitempty"`
 	Placeholders map[string][]string `yaml:"placeholders,omitempty"`
@@ -51,18 +58,24 @@ type PromptsData struct {
 	GlobalPlaceholders map[string][]string `yaml:"global_placeholders,omitempty"`
 }
 
+type PromptStatistic struct {
+	Code   string
+	UseCnt int64
+}
+
 const (
 	FILE_PATH_OPTIONS         = "/data/prompts.yaml"
 	FILE_PATH_EXAMPLE_OPTIONS = "/data/prompts_example.yaml"
 )
 
-func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) {
+func NewPromptManager(maxKeys int, statisticDao *dbase.StatisticDao, logger *slog.Logger) (*PromptManager, error) {
 
 	pm := &PromptManager{
-		logger:    logger,
-		maxKeys:   maxKeys,
-		templater: templater.NewTemplateProcessor(),
-		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		logger:       logger,
+		maxKeys:      maxKeys,
+		templater:    templater.NewTemplateProcessor(),
+		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		statisticDao: statisticDao,
 	}
 
 	// Создать файл с примером
@@ -76,6 +89,7 @@ func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) 
 
 	promptsToMap := pm.convertPromptsToMap(promptsData.Prompts)
 	pm.prompts = promptsToMap
+	pm.promptKeys = utils.GetSortedKeys(promptsToMap)
 	pm.globalPlaceholders = promptsData.GlobalPlaceholders
 
 	if !pm.validatePrompts(promptsData.Prompts) {
@@ -88,8 +102,8 @@ func NewPromptManager(maxKeys int, logger *slog.Logger) (*PromptManager, error) 
 	return pm, nil
 }
 
-func (pm *PromptManager) GetPromptById(id int) (Prompt, bool) {
-	value, exists := pm.prompts[id]
+func (pm *PromptManager) GetPromptByCode(code string) (Prompt, bool) {
+	value, exists := pm.prompts[code]
 	if !exists {
 		return Prompt{}, false
 	}
@@ -103,7 +117,7 @@ func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 	defer pm.mutex.Unlock()
 
 	maxRetries := 100
-	keysCount := len(pm.prompts)
+	keysCount := len(pm.promptKeys)
 
 	if keysCount == 0 {
 		pm.logger.Error("No prompts available")
@@ -111,15 +125,16 @@ func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 	}
 
 	if keysCount == 1 {
-		return pm.GetPromptValue(pm.prompts[1]), nil
+		return pm.GetPromptValue(pm.prompts[pm.promptKeys[1]]), nil
 	}
 
 	for i := 0; i < maxRetries; i++ {
 
 		randomIndex := pm.rng.Intn(keysCount) + 1 // +1, так как ключи начинаются с 1
 
-		value, exists := pm.prompts[randomIndex]
+		value, exists := pm.prompts[pm.promptKeys[randomIndex]]
 		if exists {
+
 			return pm.GetPromptValue(value), nil
 		}
 	}
@@ -128,6 +143,13 @@ func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 }
 
 func (pm *PromptManager) GetPromptValue(prompt Prompt) PromptValue {
+
+	//Increment counter
+	_, err := pm.statisticDao.Increment(context.Background(), prompt.Code)
+	if err != nil {
+		pm.logger.Error("Can not save statistic", "error", err)
+	}
+
 	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
 		return PromptValue{Prompt: prompt.Prompt, Negative: prompt.Negative}
 	}
@@ -240,18 +262,18 @@ func (pm *PromptManager) GetPlaceholderValuesById(name string) ([]string, bool) 
 	return values, true
 }
 
-func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) (int, error) {
+func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) (string, error) {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
 	if pm.existsPromptValue(newPrompt) {
 		pm.logger.Debug("New prompt already exists", "prompt", newPrompt)
-		return 0, fmt.Errorf("new prompt already exists")
+		return "", fmt.Errorf("new prompt already exists")
 	}
 
 	if !pm.validatePrompt(newPrompt) {
 		pm.logger.Error("Prompt is not valid")
-		return 0, fmt.Errorf("prompt is non valid")
+		return "", fmt.Errorf("prompt is non valid")
 	}
 
 	// Создаем копию оригинальной карты
@@ -260,56 +282,22 @@ func (pm *PromptManager) AddNewPrompt(newPrompt Prompt) (int, error) {
 		transformedMap[key] = value
 	}
 
-	currentKeys := len(transformedMap)
+	transformedMap[newPrompt.Code] = newPrompt
+	newKeys := utils.GetSortedKeys(transformedMap)
 
-	if currentKeys == pm.maxKeys {
-		// Находим максимальный ключ
-		maxKey := 0
-		for key := range transformedMap {
-			if key > maxKey {
-				maxKey = key
-			}
-		}
-
-		// Перемещаем ключи на одну позицию вниз
-		newMap := make(PromptMap)
-		for key, value := range transformedMap {
-			newKey := key - 1
-			if newKey > 0 {
-				newMap[newKey] = value
-			}
-		}
-
-		// Добавляем новый PromptValue под новым ключом
-		newPrompt.Idx = maxKey
-		newMap[maxKey] = newPrompt
-
-		pm.prompts = newMap
-	} else {
-		// Находим следующий ключ после максимального
-		maxKey := 0
-		for key := range transformedMap {
-			if key > maxKey {
-				maxKey = key
-			}
-		}
-
-		// Добавляем новый элемент с новым ключом
-		newPrompt.Idx = maxKey + 1
-		transformedMap[maxKey+1] = newPrompt
-
-		pm.prompts = transformedMap
-	}
+	pm.prompts = transformedMap
+	pm.promptKeys = newKeys
 
 	pm.logger.Debug("Prompts count", "count", len(pm.prompts))
 
 	err := pm.saveFile()
 	if err != nil {
 		pm.logger.Error("can not save new prompts into file", "error", err.Error())
-		return 0, err
+		return "", err
 	}
-	return newPrompt.Idx, nil
+	return newPrompt.Code, nil
 }
+
 func (pm *PromptManager) saveFile() error {
 	pm.logger.Debug("Save prompts into file", "count", len(pm.prompts))
 	prompts := convertMapToPrompts(pm.prompts)
@@ -336,13 +324,13 @@ func (pm *PromptManager) ChangePrompt(newPrompt Prompt) error {
 		return fmt.Errorf("prompt is non valid")
 	}
 
-	_, ok := pm.prompts[newPrompt.Idx]
+	_, ok := pm.prompts[newPrompt.Code]
 	if !ok {
-		pm.logger.Error("Prompt with this index does not exist", "prompt", newPrompt)
-		return fmt.Errorf("prompt with this index does not exist")
+		pm.logger.Error("Prompt with this code does not exist", "prompt", newPrompt)
+		return fmt.Errorf("prompt with code does not exist")
 	}
 
-	pm.prompts[newPrompt.Idx] = newPrompt
+	pm.prompts[newPrompt.Code] = newPrompt
 
 	err := pm.saveFile()
 	if err != nil {
@@ -352,30 +340,32 @@ func (pm *PromptManager) ChangePrompt(newPrompt Prompt) error {
 	return nil
 }
 
-func (pm *PromptManager) DeletePrompt(idx int) error {
+func (pm *PromptManager) DeletePrompt(code string) error {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
-	_, ok := pm.prompts[idx]
+	_, ok := pm.prompts[code]
 	if !ok {
-		pm.logger.Error("Prompt with this index does not exist", "index", idx)
-		return fmt.Errorf("prompt with this index does not exist")
+		pm.logger.Error("Prompt with this code does not exist", "code", code)
+		return fmt.Errorf("prompt with this code does not exist")
 	}
 
-	newMap := make(PromptMap, len(pm.prompts)-1)
-
+	// Создаем копию оригинальной карты
+	transformedMap := make(PromptMap, len(pm.prompts))
 	for key, value := range pm.prompts {
-		if key < idx {
-			newMap[key] = value
-		}
-		if key > idx {
-			value.Idx = key - 1
-			newMap[value.Idx] = value
-		}
+		transformedMap[key] = value
+	}
+	delete(transformedMap, code)
+	newKeys := utils.GetSortedKeys(transformedMap)
+
+	pm.prompts = transformedMap
+	pm.promptKeys = newKeys
+
+	err := pm.statisticDao.Delete(context.Background(), code)
+	if err != nil {
+		pm.logger.Error("Can not delete prompt statistic", "error", err.Error())
 	}
 
-	pm.prompts = newMap
-
-	err := pm.saveFile()
+	err = pm.saveFile()
 	if err != nil {
 		pm.logger.Error("can not save prompts into file", "error", err.Error())
 		return fmt.Errorf("can not save prompts into file. %v", err)
@@ -387,6 +377,23 @@ func (pm *PromptManager) DeletePrompt(idx int) error {
 func (pm *PromptManager) GetPromptsData() *PromptsData {
 	prompts := convertMapToPrompts(pm.prompts)
 	return &PromptsData{Prompts: prompts, GlobalPlaceholders: pm.globalPlaceholders}
+}
+
+func (pm *PromptManager) GetStatistic() map[string]PromptStatistic {
+	var result map[string]PromptStatistic = make(map[string]PromptStatistic)
+	all, err := pm.statisticDao.GetAll(context.Background())
+	if err != nil {
+		return result
+	}
+
+	for _, value := range all {
+		result[value.Code] = PromptStatistic{
+			Code:   value.Code,
+			UseCnt: value.UseCnt,
+		}
+	}
+
+	return result
 }
 
 func (pm *PromptManager) readYaml() (*PromptsData, error) {
@@ -404,6 +411,27 @@ func (pm *PromptManager) readYaml() (*PromptsData, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//TODO Это код миграции, в будущих версиях его надо убрать
+	var isMigrate = false
+	var result []Prompt
+	for _, prmt := range d.Prompts {
+		isPromtMigrate, newPrompt := migrationPrompt(prmt)
+		if isPromtMigrate {
+			isMigrate = true
+		}
+		result = append(result, newPrompt)
+	}
+	d.Prompts = result
+
+	if isMigrate {
+		err := pm.writeYaml(FILE_PATH_OPTIONS, &d)
+		if err != nil {
+			pm.logger.Error("Can not write file after migration", err.Error())
+			return nil, err
+		}
+	}
+
 	return &d, nil
 }
 
@@ -463,13 +491,13 @@ func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
 }
 
 func (pm *PromptManager) convertPromptsToMap(prompts []Prompt) PromptMap {
-	promptMap := make(map[int]Prompt)
+	promptMap := make(map[string]Prompt)
 	for _, prompt := range prompts {
-		if _, exists := promptMap[prompt.Idx]; exists {
+		if _, exists := promptMap[prompt.Code]; exists {
 			pm.logger.Error("Not unique idx", "idx", prompt.Idx)
 			continue
 		}
-		promptMap[prompt.Idx] = prompt
+		promptMap[prompt.Code] = prompt
 	}
 	pm.logger.Debug("Converted", "count", len(promptMap))
 	return promptMap
@@ -514,9 +542,9 @@ func (pm *PromptManager) validatePrompt(prompt Prompt) bool {
 
 func convertMapToPrompts(promptMap PromptMap) []Prompt {
 	prompts := make([]Prompt, 0, len(promptMap))
-	for idx, promptValue := range promptMap {
+	for _, promptValue := range promptMap {
 		prompts = append(prompts, Prompt{
-			Idx:          idx,
+			Code:         promptValue.Code,
 			Prompt:       promptValue.Prompt,
 			Negative:     promptValue.Negative,
 			Placeholders: promptValue.Placeholders,
@@ -525,20 +553,29 @@ func convertMapToPrompts(promptMap PromptMap) []Prompt {
 	return prompts
 }
 
-func copyPromptMap(originalMap PromptMap) PromptMap {
-	copiedMap := make(map[int]Prompt, len(originalMap))
-	for key, value := range originalMap {
-		// Копируем каждое значение в новую карту
-		copiedMap[key] = value
+func iddxToCode(idx *int) string {
+	return "prmt_" + strconv.Itoa(*idx)
+}
+
+func migrationPrompt(prompt Prompt) (bool, Prompt) {
+	if prompt.Code != "" {
+		return false, prompt
 	}
-	return copiedMap
+
+	return true, Prompt{
+		Idx:          nil,
+		Code:         iddxToCode(prompt.Idx),
+		Prompt:       prompt.Prompt,
+		Negative:     prompt.Negative,
+		Placeholders: prompt.Placeholders,
+	}
 }
 
 func createDefaultPrompts() *PromptsData {
 	return &PromptsData{
 		Prompts: []Prompt{
 			{
-				Idx:    1,
+				Code:   "prmt_1",
 				Prompt: "test",
 			},
 		},
@@ -555,7 +592,8 @@ func createExamplePrompts() *PromptsData {
 	return &PromptsData{
 		Prompts: []Prompt{
 			{
-				Idx:    1,
+				Idx:    nil,
+				Code:   "test1",
 				Prompt: defaultPrompt,
 			},
 		},
@@ -595,7 +633,7 @@ func unionMaps(firstMap, secondMap map[string][]string) map[string][]string {
 // deepCopyPrompt создаёт глубокую копию одного Prompt
 func deepCopyPrompt(p Prompt) Prompt {
 	copied := Prompt{
-		Idx:    p.Idx,
+		Code:   p.Code,
 		Prompt: p.Prompt,
 	}
 
@@ -617,7 +655,7 @@ func deepCopyPrompt(p Prompt) Prompt {
 	return copied
 }
 
-// deepCopyAndSortPrompts делает глубокую копию и сортирует по Idx
+// deepCopyAndSortPrompts делает глубокую копию и сортирует по Code
 func deepCopyAndSortPrompts(prompts []Prompt) []Prompt {
 	if prompts == nil {
 		return nil
@@ -631,7 +669,7 @@ func deepCopyAndSortPrompts(prompts []Prompt) []Prompt {
 
 	// Сортировка по Idx
 	sort.Slice(copied, func(i, j int) bool {
-		return copied[i].Idx < copied[j].Idx
+		return copied[i].Code < copied[j].Code
 	})
 
 	return copied

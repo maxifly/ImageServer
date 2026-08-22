@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.08.0
+- Change prompt index to prompt code [#30](https://github.com/maxifly/ImageServer/issues/30)
+- Add prompt statistic [#29](https://github.com/maxifly/ImageServer/issues/29)
+- Use database for prompt statistic
+
 ## 1.07.0
 
 - Sort file list after load

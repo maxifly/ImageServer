@@ -2,15 +2,23 @@ services:
   image_server:
     build: .
     container_name: image_server
+
     ports:
       - "8099:8099"
+
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ${IMAGE_SERVER_DATA_ROOT}/certs:/certs:ro
       - ${IMAGE_SERVER_DATA_ROOT}/data:/data
       - ${IMAGE_SERVER_DATA_ROOT}/images:/images
       - ${IMAGE_SERVER_DATA_ROOT}/log:/log
+      - ${IMAGE_SERVER_DATA_ROOT}/data/db:/data/db
+      - ${IMAGE_SERVER_DATA_ROOT}/data/backups:/data/backups
+
     restart: always
+    stop_grace_period: 30s    # время на graceful shutdown
 
     environment:
       - TZ=Europe/Moscow
+      - DB_PATH=/data/db/myapp.db
+      - BACKUP_DIR=/data/backups

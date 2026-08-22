@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,7 @@ type Rest struct {
 	port          string
 	promptManager *promptmanager.PromptManager
 	metrics       *metrics.AppMetrics
+	server        *http.Server
 }
 
 func NewRest(port string,
@@ -64,8 +66,8 @@ func NewRest(port string,
 	router.HandleFunc("/api/status", restObj.handleStatusAPI).Methods("GET")
 	router.HandleFunc("/api/prompts", restObj.handleGetPromptsPage).Methods("GET")
 	router.HandleFunc("/api/prompts", restObj.handleCreatePrompt).Methods("POST")
-	router.HandleFunc("/api/prompts/{promptId}", restObj.handlePromptByIdApi).Methods("GET", "PUT")
-	router.HandleFunc("/api/prompts/{promptId}", restObj.handleDeletePromptByIdApi).Methods("DELETE")
+	router.HandleFunc("/api/prompts/{promptCode}", restObj.handlePromptByIdApi).Methods("GET", "PUT")
+	router.HandleFunc("/api/prompts/{promptCode}", restObj.handleDeletePromptByIdApi).Methods("DELETE")
 	router.HandleFunc("/api/global-placeholders", restObj.handleCreateGlobalPlaceholder).Methods("POST")
 	router.HandleFunc("/api/global-placeholders/{name}", restObj.handleGlobalPlaceholderByIdApi).Methods("GET", "PUT")
 	router.HandleFunc("/api/global-placeholders/{name}", restObj.handleDeleteGlobalPlaceholderByIdApi).Methods("DELETE")
@@ -115,8 +117,16 @@ func (rest *Rest) handleStatusAPI(w http.ResponseWriter, r *http.Request) {
 	//json.NewEncoder(w).Encode(data)
 }
 
-func (rest *Rest) getPrompts() *promptmanager.PromptsData {
-	return rest.promptManager.GetPromptsData()
+func (rest *Rest) getPrompts() PromptsData {
+	data := rest.promptManager.GetPromptsData()
+	statistics := rest.promptManager.GetStatistic()
+
+	return PromptsData{
+		Prompts:            data.Prompts,
+		GlobalPlaceholders: data.GlobalPlaceholders,
+		PromptStatistic:    statistics,
+	}
+
 }
 
 func (rest *Rest) getPageData() StatusResponse {
@@ -326,7 +336,7 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, ok := rest.promptManager.GetPromptById(generateReq.PromptID)
+	prompt, ok := rest.promptManager.GetPromptByCode(generateReq.PromptID)
 	if !ok {
 		rest.logger.Error("Cannot find prompt", "id", generateReq.PromptID)
 		http.Error(w, "Cannot find prompt", http.StatusUnprocessableEntity)
@@ -395,7 +405,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusOK, startResp)
 }
 
-// Функция для обработки POST-запросов к /operation/start
+// Функция для обработки POST-запросов к /prompt/add
 func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 	rest.logger.Debug("Add prompt request")
 	// Создаем ответ
@@ -417,7 +427,9 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	promptValue := promptmanager.Prompt{Prompt: promptReq.Prompt, Placeholders: nil}
+	code := "prmt_" + time.Now().Format("2006_01_02_15_04_05")
+
+	promptValue := promptmanager.Prompt{Code: code, Prompt: promptReq.Prompt, Placeholders: nil}
 	if promptReq.Negative != nil {
 		promptValue.Negative = promptReq.Negative
 	}
@@ -509,9 +521,18 @@ func (rest *Rest) handleGetPromptsPage(w http.ResponseWriter, r *http.Request) {
 	rest.logger.Error("***", "len", len(prompts.Prompts))
 
 	for _, p := range prompts.Prompts {
+
+		var useCount int64 = 0
+
+		statistic, ok := prompts.PromptStatistic[p.Code]
+		if ok {
+			useCount = statistic.UseCnt
+		}
+
 		card := PromptCardResponse{
-			ID:              p.Idx,
+			ID:              p.Code,
 			Text:            p.Prompt,
+			UseCount:        useCount,
 			PlaceholderKeys: JoinMapKeys(p.Placeholders),
 		}
 		cards = append(cards, card)
@@ -591,9 +612,14 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cannot parse body", http.StatusUnprocessableEntity)
 		return
 	}
+	// Проверяем наличие кода и если его нет - делаем новый код
 
+	code := promptReq.ID
+	if code == "" {
+		code = "prmt_" + time.Now().Format("06_01_02_15_04_05")
+	}
 	prompt := promptmanager.Prompt{
-		Idx:      promptReq.ID,
+		Code:     code,
 		Prompt:   promptReq.Text,
 		Negative: promptReq.Negative,
 	}
@@ -610,7 +636,7 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 		prompt.Placeholders = placeholders
 	}
 
-	newID, err := rest.promptManager.AddNewPrompt(prompt)
+	newCode, err := rest.promptManager.AddNewPrompt(prompt)
 	if err != nil {
 		rest.logger.Error("Cannot add prompt", "error", err)
 		http.Error(w, "Cannot add prompt: "+err.Error(), http.StatusUnprocessableEntity)
@@ -619,7 +645,7 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if err := json.NewEncoder(w).Encode(map[string]int{"ID": newID}); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]string{"ID": newCode}); err != nil {
 		log.Printf("Ошибка кодирования JSON: %v", err)
 		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
 	}
@@ -631,20 +657,14 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 func (rest *Rest) handleDeletePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 	rest.logger.Info("Delete prompt by id")
 	vars := mux.Vars(r)
-	promptIdS, ok := vars["promptId"]
+	promptCode, ok := vars["promptCode"]
 	if !ok {
-		rest.logger.Error("Prompt id is empty")
-		http.Error(w, "Prompt ID is empty", http.StatusBadRequest)
+		rest.logger.Error("Prompt code is empty")
+		http.Error(w, "Prompt code is empty", http.StatusBadRequest)
 		return
 	}
 
-	promptId, err := strconv.Atoi(promptIdS)
-	if err != nil {
-		http.Error(w, "Prompt ID must be integer", http.StatusBadRequest)
-		return
-	}
-
-	err = rest.promptManager.DeletePrompt(promptId)
+	err := rest.promptManager.DeletePrompt(promptCode)
 	if err != nil {
 		rest.logger.Error("Cannot delete prompt", "error", err)
 		http.Error(w, "Cannot delete prompt: "+err.Error(), http.StatusUnprocessableEntity)
@@ -736,22 +756,16 @@ func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 	rest.logger.Info("Processing prompt by id")
 	vars := mux.Vars(r)
 
-	promptIdS, ok := vars["promptId"]
+	promptCode, ok := vars["promptCode"]
 	if !ok {
 		rest.logger.Error("Prompt id is empty")
 		http.Error(w, "Prompt ID is empty", http.StatusBadRequest)
 		return
 	}
 
-	promptId, err := strconv.Atoi(promptIdS)
-	if err != nil {
-		http.Error(w, "Prompt ID must be integer", http.StatusBadRequest)
-		return
-	}
-
 	if r.Method == http.MethodGet {
 
-		prompt, exists := rest.promptManager.GetPromptById(promptId)
+		prompt, exists := rest.promptManager.GetPromptByCode(promptCode)
 		if !exists {
 			http.Error(w, "Не найдено", http.StatusNotFound)
 			return
@@ -774,7 +788,7 @@ func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result := PromptDetail{
-			ID:           prompt.Idx,
+			ID:           prompt.Code,
 			Text:         prompt.Prompt,
 			Negative:     prompt.Negative,
 			Placeholders: placeholders,
@@ -798,7 +812,7 @@ func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 		}
 
 		prompt := promptmanager.Prompt{
-			Idx:      promptReq.ID,
+			Code:     promptReq.ID,
 			Prompt:   promptReq.Text,
 			Negative: promptReq.Negative,
 		}
@@ -857,7 +871,22 @@ func (rest *Rest) Start() error {
 		return fmt.Errorf("key not found: %s", keyFile)
 	}
 
-	return http.ListenAndServeTLS(addr, certFile, keyFile, rest.router)
+	rest.server = &http.Server{
+		Addr:         addr,
+		Handler:      rest.router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 5 * time.Minute,
+		IdleTimeout:  60 * time.Second,
+	}
+	return rest.server.ListenAndServeTLS(certFile, keyFile)
+}
+
+func (rest *Rest) Stop(ctx context.Context) error {
+	if err := rest.server.Shutdown(ctx); err != nil {
+		rest.logger.Error("HTTP shutdown failed: %w", err)
+		return fmt.Errorf("HTTP shutdown failed: %w", err)
+	}
+	return nil
 }
 
 func (rest *Rest) incrRequestMetric(metricType string, isError bool) {
