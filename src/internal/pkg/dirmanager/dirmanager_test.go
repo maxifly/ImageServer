@@ -2,6 +2,7 @@ package dirmanager
 
 import (
 	"fmt"
+	"imgserver/internal/pkg/metrics"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestDirManager_IsDirectoryExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			dm, err := NewDirManager(filepath.Join("tests", "dm", tt.dir), 1, 10, logger)
+			dm, err := NewDirManager(filepath.Join("tests", "dm", tt.dir), 1, 10, "test", metrics.NewAppMetrics(), logger)
 
 			if tt.createDir {
 				dm.Start()
@@ -98,7 +99,7 @@ func TestDirManager_AddFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			dm, err := NewDirManager(dirPath, 3, 5, logger)
+			dm, err := NewDirManager(dirPath, 3, 5, "test", metrics.NewAppMetrics(), logger)
 			if err != nil {
 				t.Errorf("Create dm error = %v", err)
 				return

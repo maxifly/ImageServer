@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"github.com/disintegration/imaging"
-	"golang.org/x/image/draw"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"log/slog"
 	"math"
 	"os"
+
+	"github.com/disintegration/imaging"
+	"golang.org/x/image/draw"
 )
 
 type ImageParameters struct {
@@ -64,7 +65,7 @@ func (ipr *Ipr) ConvertBase64ToJpg(imageBase64 string) ([]byte, error) {
 	// Декодирование Base64
 	imgBytes, err := base64.StdEncoding.DecodeString(imageBase64)
 	if err != nil {
-		return nil, fmt.Errorf("error when decode Base64: %v", err)
+		return nil, fmt.Errorf("error when decode Base64: %w", err)
 	}
 
 	// Определяем формат

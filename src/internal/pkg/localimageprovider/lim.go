@@ -90,6 +90,9 @@ func (lim *Lim) GetImageProviderCode() string {
 }
 
 func (lim *Lim) Generate(isDirectCall bool) (string, error) {
+	if lim.dm == nil {
+		return "", fmt.Errorf("lim provider disabled: local_image_folder is not set")
+	}
 	if !isDirectCall {
 		lim.actioner.SetLastCallTime(time.Now())
 	}
@@ -101,6 +104,9 @@ func (lim *Lim) GenerateByParameters(prompt opermanager.GenerationParameters, is
 }
 
 func (lim *Lim) GetImageSlice(operationId string) (bool, []byte, error) {
+	if lim.dm == nil {
+		return false, nil, fmt.Errorf("lim provider disabled: local_image_folder is not set")
+	}
 	sourceFile := lim.dm.GetRandomFile()
 
 	jpg, err := lim.ipr.ConvertImageFileToJpg(sourceFile)
@@ -133,6 +139,10 @@ func (lim *Lim) GetProperties() *opermanager.ProviderProperties {
 }
 
 func (lim *Lim) Refresh() error {
+	if lim.dm == nil {
+		lim.logger.Info("lim disabled")
+		return nil
+	}
 	lim.logger.Debug("Refresh local image provider")
 	return lim.dm.ReadFiles()
 }
