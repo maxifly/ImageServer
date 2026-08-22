@@ -39,6 +39,11 @@
                     {{end}}
                 </div>
                 {{end}}
+
+                <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis fw-normal text-nowrap"
+                      title="Количество использований">
+                   <i class="bi bi-lightning-charge-fill me-1"></i>{{ .UseCount }}
+                </span>
             </div>
         </div>
     </div>
@@ -438,7 +443,7 @@
                 const res = await fetch('/api/prompts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ Text: text, Negative: negative, Placeholders: placeholders })
+                    body: JSON.stringify({ ID: '', Text: text, Negative: negative, Placeholders: placeholders })
                 });
                 if (!res.ok) {
                     const errorMsg = await formatErrorMessage(res);
