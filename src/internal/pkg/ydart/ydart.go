@@ -2,6 +2,7 @@ package ydart
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"imgserver/internal/pkg/actioner"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +26,8 @@ const (
 	FILE_PATH_OPTIONS        = "/data/ydart-options.json"
 	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
 	ProviderCode             = "YandexArt"
+	YANDEX_MODEL             = "aliceai-image-art-3.0"
+	TMP_FILE                 = "ydart_tmp.bin"
 )
 
 var _ opermanager.ImageProvider = (*YdArt)(nil)
@@ -42,6 +47,7 @@ type YdArtOptions struct {
 }
 
 type YdArt struct {
+	oapiClient      openai.Client
 	httpClient      *http.Client
 	logger          *slog.Logger
 	soptions        *YdArtSecretOption
@@ -51,6 +57,7 @@ type YdArt struct {
 	actioner        *actioner.Actioner
 	ipr             *imageprocessor.Ipr
 	properties      *opermanager.ProviderProperties
+	fileStorage     *FileStorage
 }
 
 type getImageResponse struct {
@@ -94,7 +101,14 @@ func NewYdArt(imageParameters imageprocessor.ImageParameters, promptManager *pro
 		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
 	}
 	//logger.Debug("Options ", "options", options)
+	oapiClient := openai.NewClient(
+		option.WithAPIKey(soptions.ApiKey),
+		option.WithBaseURL("https://ai.api.cloud.yandex.net/v1"),
+		option.WithProject(soptions.FolderId),
+	)
+
 	return &YdArt{
+		oapiClient:    oapiClient,
 		httpClient:    http.DefaultClient,
 		logger:        logger,
 		soptions:      &soptions,
@@ -102,6 +116,7 @@ func NewYdArt(imageParameters imageprocessor.ImageParameters, promptManager *pro
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
 		ipr:           imageprocessor.NewIpr(imageParameters, logger),
+		fileStorage:   NewFileStorage(),
 		properties: &opermanager.ProviderProperties{
 			IsCanWorkWithPrompt:  true,
 			IsNeedSaveLocalFiles: true,
@@ -145,6 +160,29 @@ func (ydArt *YdArt) generateByPrompt(prompt string, isDirectCall bool) (string, 
 
 	ydArt.logger.Debug("generate with prompt", "prompt", prompt, "isDirect", isDirectCall)
 
+	if !isDirectCall {
+		ydArt.actioner.SetLastCallTime(time.Now())
+	}
+
+	err := ydArt.generateByOpenAi(prompt)
+	if err != nil {
+		resultError := fmt.Errorf("error generate image: %w", err)
+		ydArt.logger.Error(resultError.Error())
+		return "", err
+	}
+	timestamp := time.Now().UnixNano()
+	return fmt.Sprintf("ydrOapiGen_%d", timestamp), nil
+}
+
+// Deprecated: old async realisation
+func (ydArt *YdArt) generateByYdArtApi(prompt string, isDirectCall bool) (string, error) {
+
+	if prompt == "" {
+		return "", fmt.Errorf("prompt is empty")
+	}
+
+	ydArt.logger.Debug("generate with prompt", "prompt", prompt, "isDirect", isDirectCall)
+
 	generatePromptMessage := generatePrompt{Text: prompt,
 		Weight: 1}
 
@@ -174,10 +212,6 @@ func (ydArt *YdArt) generateByPrompt(prompt string, isDirectCall bool) (string, 
 		return "", resultError
 	}
 
-	if !isDirectCall {
-		ydArt.actioner.SetLastCallTime(time.Now())
-	}
-
 	if response.Error != "" {
 		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
 		ydArt.logger.Error(resultError.Error())
@@ -194,7 +228,56 @@ func (ydArt *YdArt) generateByPrompt(prompt string, isDirectCall bool) (string, 
 	return response.Id, nil
 }
 
+func (ydArt *YdArt) generateByOpenAi(prompt string) error {
+
+	model := fmt.Sprintf("art://%s/%s", ydArt.soptions.FolderId, YANDEX_MODEL)
+	//TODO Обработать ошибки правильно
+	//TODO Сохранить результат в промежуточный файл
+	//TODO Отдать как-то файл в другом методе
+	response, err := ydArt.oapiClient.Images.Generate(context.Background(), openai.ImageGenerateParams{
+		Model:  openai.ImageModel(model),
+		Prompt: prompt,
+		Size:   openai.ImageGenerateParamsSize1024x1536,
+	})
+	if err != nil {
+		resultError := fmt.Errorf("create image error: %w", err)
+		ydArt.logger.Error(resultError.Error())
+		return err
+	}
+
+	//imageBytes, err := base64.StdEncoding.DecodeString(response.Data[0].B64JSON)
+	imageBytes, err := ydArt.ipr.ConvertBase64ToJpg(response.Data[0].B64JSON)
+	if err != nil {
+		resultError := fmt.Errorf("decode error: %w", err)
+		ydArt.logger.Error(resultError.Error())
+		return resultError
+	}
+
+	err = ydArt.fileStorage.SaveToFile(TMP_FILE, imageBytes)
+	if err != nil {
+		resultError := fmt.Errorf("save result to file error: %w", err)
+		ydArt.logger.Error(resultError.Error())
+		return resultError
+	}
+
+	return nil
+}
+
 func (ydArt *YdArt) GetImageSlice(operationId string) (bool, []byte, error) {
+	ydArt.logger.Debug("Get image request")
+
+	imageData, err := ydArt.fileStorage.LoadFromFile(TMP_FILE)
+	if err != nil {
+		resultError := fmt.Errorf("error when read temporary image file: %w", err)
+		ydArt.logger.Error(resultError.Error())
+		return true, nil, resultError
+	}
+
+	return true, imageData, nil
+}
+
+// Deprecated: old async realisation
+func (ydArt *YdArt) GetImageSliceOld(operationId string) (bool, []byte, error) {
 	ydArt.logger.Debug("Get image request")
 	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
 	var response getImageResponse
