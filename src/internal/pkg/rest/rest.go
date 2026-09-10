@@ -359,7 +359,7 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 
 // Функция для обработки POST-запросов к /operation/start
 func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
-
+	rest.logger.Debug("Start operation")
 	// Создаем ответ
 	var startResp StartResponse
 	var errorAttrs ErrorAttributes
@@ -388,6 +388,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 
 	operationId, err := rest.operMng.StartOperation(startReq.Type, startReq.Prompt)
 	if err != nil {
+		rest.logger.Error("Start operation error", "error", err.Error())
 		errorAttrs.Code = "StartError"
 		errorAttrs.Message = "Can not start operation"
 		errorAttrs.DevMessage = err.Error()
@@ -401,6 +402,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 	startResp.ID = operationId
 	startResp.Status = opermanager.StatusPending
 	rest.incrRequestMetric(METRIC_OPERATION_START, false)
+	rest.logger.Debug("Operation started", "operationId", operationId)
 	sendJSONResponse(w, http.StatusOK, startResp)
 }
 
