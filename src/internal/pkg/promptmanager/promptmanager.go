@@ -68,6 +68,14 @@ const (
 	FILE_PATH_EXAMPLE_OPTIONS = "/data/prompts_example.yaml"
 )
 
+const PromptCodePrefix = "prmt_"
+
+// GeneratePromptCode возвращает код промпта на основе текущего времени.
+// Единый формат с полным годом для всех способов создания промптов.
+func GeneratePromptCode() string {
+	return PromptCodePrefix + time.Now().Format("2006_01_02_15_04_05")
+}
+
 func NewPromptManager(maxKeys int, statisticDao *dbase.StatisticDao, logger *slog.Logger) (*PromptManager, error) {
 
 	pm := &PromptManager{
@@ -125,12 +133,12 @@ func (pm *PromptManager) GetRandomPromptValue() (PromptValue, error) {
 	}
 
 	if keysCount == 1 {
-		return pm.GetPromptValue(pm.prompts[pm.promptKeys[1]]), nil
+		return pm.GetPromptValue(pm.prompts[pm.promptKeys[0]]), nil
 	}
 
 	for i := 0; i < maxRetries; i++ {
 
-		randomIndex := pm.rng.Intn(keysCount) + 1 // +1, так как ключи начинаются с 1
+		randomIndex := pm.rng.Intn(keysCount)
 
 		value, exists := pm.prompts[pm.promptKeys[randomIndex]]
 		if exists {
@@ -335,7 +343,7 @@ func (pm *PromptManager) ChangePrompt(newPrompt Prompt) error {
 	err := pm.saveFile()
 	if err != nil {
 		pm.logger.Error("Can not save prompts into file", "error", err.Error())
-		return fmt.Errorf("can not save prompts into file. %v", err)
+		return fmt.Errorf("can not save prompts into file: %w", err)
 	}
 	return nil
 }
@@ -368,7 +376,7 @@ func (pm *PromptManager) DeletePrompt(code string) error {
 	err = pm.saveFile()
 	if err != nil {
 		pm.logger.Error("can not save prompts into file", "error", err.Error())
-		return fmt.Errorf("can not save prompts into file. %v", err)
+		return fmt.Errorf("can not save prompts into file: %w", err)
 	}
 
 	return nil
@@ -458,26 +466,17 @@ func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
 		fileExists = false
 	}
 
-	// Открываем файл для записи (создаем, если не существует)
-	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		pm.logger.Error("Can not open prompts file", err, "filename", filename)
-		return fmt.Errorf("can not open prompts file '%s': %w", filename, err)
-	}
-	defer file.Close()
-
-	// Записываем JSON в файл
-	_, err = file.Write(jsonData)
-	if err != nil {
+	// Атомарная запись: пишем во временный файл в том же каталоге и переименовываем.
+	// Фиксированное имя .tmp + O_TRUNC: записи сериализованы мьютексом, очистка не нужна.
+	content := append(jsonData, '\n')
+	tmpName := filename + ".tmp"
+	if err := atomicWriteFile(tmpName, content, 0644); err != nil {
 		pm.logger.Error("Can not write file", err, "filename", filename)
 		return fmt.Errorf("can not write file '%s': %w", filename, err)
 	}
-
-	// Добавляем символ новой строки в конец файла
-	_, err = file.WriteString("\n")
-	if err != nil {
-		pm.logger.Error("Can not write file", err, "filename", filename)
-		return fmt.Errorf("can not write file '%s': %w", filename, err)
+	if err := os.Rename(tmpName, filename); err != nil {
+		pm.logger.Error("Can not rename file", err, "filename", filename, "tmp", tmpName)
+		return fmt.Errorf("can not rename file '%s': %w", filename, err)
 	}
 
 	if !fileExists {
@@ -488,6 +487,24 @@ func (pm *PromptManager) writeYaml(filename string, d *PromptsData) error {
 	}
 
 	return nil
+}
+
+// atomicWriteFile пишет данные в файл с перезаписью (O_TRUNC), сбрасывая их на диск.
+// Используется для временного файла перед атомарным переименованием в целевой.
+func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func (pm *PromptManager) convertPromptsToMap(prompts []Prompt) PromptMap {

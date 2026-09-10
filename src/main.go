@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"imgserver/internal/appimgserver"
+	appimageserver "imgserver/internal/appimgserver"
 	"imgserver/internal/pkg/dbase"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,15 +26,18 @@ func main() {
 		port = "8099"
 	}
 
-	app := appimageserver.NewImgSrv(port, db)
+	app, err := appimageserver.NewImgSrv(port, db)
+	if err != nil {
+		log.Printf("Failed to initialize server: %v", err)
+		panic(err)
+	}
 
 	defer app.Stop()
 
-	//app.Start()
-
 	go func() {
-		if err := app.Start(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+		if err := app.Start(); err != nil {
+			log.Printf("Server failed: %v", err)
+			panic(err)
 		}
 	}()
 
