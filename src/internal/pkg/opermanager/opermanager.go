@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,7 +148,7 @@ func (op *OperMngr) Start() error {
 	err = op.dirManagerTemp.Start()
 	if err != nil {
 		op.logger.Error("Error start temporary directory manager", "error", err)
-		return fmt.Errorf("error start temporary directory manager: %v", err)
+		return fmt.Errorf("error start temporary directory manager: %w", err)
 	}
 
 	for _, provider := range op.imageProviders {
@@ -157,7 +156,7 @@ func (op *OperMngr) Start() error {
 		err := (*provider).Start()
 		if err != nil {
 			op.logger.Error("Error start image provider", "provider", (*provider).GetImageProviderForImageServerName(), "error", err)
-			return fmt.Errorf("error start provider: %v", err)
+			return fmt.Errorf("error start provider: %w", err)
 		}
 	}
 
@@ -324,7 +323,7 @@ func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture 
 		imgBytes, err := os.ReadFile(originalFile)
 
 		if err != nil {
-			return id, fmt.Errorf("error when read file %v", err)
+			return id, fmt.Errorf("error when read file: %w", err)
 		}
 
 		file, err = op.saveFiles(id, imgBytes, false)
@@ -378,7 +377,7 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameter
 	}
 
 	if err != nil {
-		resultError := fmt.Errorf("error provider generate %v", err)
+		resultError := fmt.Errorf("error provider generate: %w", err)
 		op.logger.Error("Can not start operation", "error", resultError)
 		providerMetric.IncrementErrorRequest()
 
@@ -592,22 +591,23 @@ func (op *OperMngr) fillBlack24Bit(rgba *image.RGBA) {
 }
 
 func (op *OperMngr) generateId() string {
-	unixSeconds := time.Now().Unix()
-	return "i" + strconv.Itoa(int(unixSeconds))
+	// Идентификатор операции: префикс "i", время в фиксированном формате,
+	// чтобы лексикографическая сортировка совпадала с хронологическим порядком.
+	// Наносекунды дают уникальность даже при нескольких операциях в одну секунду.
+	now := time.Now()
+	return fmt.Sprintf("i%s-%09d", now.Format("20060102150405"), now.Nanosecond())
 }
 
 func (op *OperMngr) generateFileName(id string) string {
-	unixSeconds := time.Now().Unix()
-	orig := "f" + strconv.Itoa(int(unixSeconds)) + "-orig.jpeg"
-
-	return filepath.Join(op.dirManager.GetDirectoryPath(), orig)
+	// Имя файла оригинала: префикс "f", время в том же фиксированном формате.
+	now := time.Now()
+	return filepath.Join(op.dirManager.GetDirectoryPath(), fmt.Sprintf("f%s-%09d-orig.jpeg", now.Format("20060102150405"), now.Nanosecond()))
 }
 
 func (op *OperMngr) generateTemporaryFileName(id string) string {
-	unixSeconds := time.Now().Unix()
-	small := "f" + strconv.Itoa(int(unixSeconds)) + ".jpeg"
-
-	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), small)
+	// Имя временного файла: префикс "f", время в том же фиксированном формате.
+	now := time.Now()
+	return filepath.Join(op.dirManagerTemp.GetDirectoryPath(), fmt.Sprintf("f%s-%09d.jpeg", now.Format("20060102150405"), now.Nanosecond()))
 }
 
 func (op *OperMngr) dequeue() (*NextGenerationData, bool) {

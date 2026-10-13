@@ -3,11 +3,8 @@ package appimageserver
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/go-co-op/gocron/v2"
-	"github.com/natefinch/lumberjack"
-	"gopkg.in/yaml.v3"
 	"imgserver/internal/pkg/dbase"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
@@ -20,9 +17,16 @@ import (
 	"imgserver/internal/pkg/utils"
 	"imgserver/internal/pkg/ydart"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/davecgh/go-spew/spew"
+	"github.com/go-co-op/gocron/v2"
+	"github.com/natefinch/lumberjack"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -84,11 +88,11 @@ func defaultConfig() ApplOptions {
 	}
 }
 
-func NewImgSrv(port string, db *sql.DB) *ImgSrv {
+func NewImgSrv(port string, db *sql.DB) (*ImgSrv, error) {
 
 	options, err := readOptions()
 	if err != nil {
-		panic(fmt.Sprintf("Can not read Options: %v", err))
+		return nil, fmt.Errorf("can not read options: %w", err)
 	}
 
 	// Настройка обработчика для записи в файл с ротацией
@@ -145,16 +149,16 @@ func NewImgSrv(port string, db *sql.DB) *ImgSrv {
 
 	promptManager, err := promptmanager.NewPromptManager(options.PromptsAmount, statisticDao, logger)
 	if err != nil {
-		logger.Error("Error create PromptManager %v", err)
-		panic(fmt.Sprintf("error create PromptManager %v", err))
+		logger.Error("Error create PromptManager", "error", err)
+		return nil, fmt.Errorf("error create PromptManager: %w", err)
 	}
 
 	originalImagePath := filepath.Join(options.ImagePath, "original")
 
 	dirManager, err := dirmanager.NewDirManager(originalImagePath, options.ImageLimitMin, options.ImageLimitMax, "images", appMetrics, logger)
 	if err != nil {
-		logger.Error("Error create DirManager %v", err)
-		panic(fmt.Sprintf("error create DirManager %v", err))
+		logger.Error("Error create DirManager", "error", err)
+		return nil, fmt.Errorf("error create DirManager: %w", err)
 	}
 
 	imgPrmt := imageprocessor.ImageParameters{
@@ -168,8 +172,8 @@ func NewImgSrv(port string, db *sql.DB) *ImgSrv {
 		options.SleepTimes, dirManager, appMetrics, logger)
 
 	if err != nil {
-		logger.Error("Error create OperManager %v", err)
-		panic(fmt.Sprintf("error create OperManager %v", err))
+		logger.Error("Error create OperManager", "error", err)
+		return nil, fmt.Errorf("error create OperManager: %w", err)
 	}
 
 	imgsrv := ImgSrv{
@@ -189,23 +193,27 @@ func NewImgSrv(port string, db *sql.DB) *ImgSrv {
 		iYdArt := (opermanager.ImageProvider)(ydArt)
 		err = iYdArt.SetImageParameters(&imageParameters)
 		if err != nil {
-			logger.Error("Error setting image parameters for ydArt: %v", err)
-			panic(fmt.Sprintf("error setting image parameters for ydArt: %v", err))
+			logger.Error("Error setting image parameters for ydArt", "error", err)
+			return nil, fmt.Errorf("error setting image parameters for ydArt: %w", err)
 		}
 
 		operMng.AddImageProvider(&iYdArt)
 	}
 	if !utils.Contains(options.DisabledProviders, "lim") && options.ProvidersOptions.LimOptions != nil {
+		if strings.TrimSpace(options.ProvidersOptions.LimOptions.LocalImageFolder) == "" {
+			logger.Error("lim provider enabled but local_image_folder is empty")
+			return nil, fmt.Errorf("lim provider enabled but local_image_folder is empty")
+		}
 		lim, err := localimageprovider.NewLim(imgPrmt, appMetrics, logger, options.ProvidersOptions.LimOptions)
 		if err != nil {
-			logger.Error("Error create lim provider: %v", err)
-			panic(fmt.Sprintf("error create lim provider: %v", err))
+			logger.Error("Error create lim provider", "error", err)
+			return nil, fmt.Errorf("error create lim provider: %w", err)
 		}
 		iLim := (opermanager.ImageProvider)(lim)
 		err = iLim.SetImageParameters(&imageParameters)
 		if err != nil {
-			logger.Error("Error setting image parameters for lim: %v", err)
-			panic(fmt.Sprintf("error setting image parameters for lim: %v", err))
+			logger.Error("Error setting image parameters for lim", "error", err)
+			return nil, fmt.Errorf("error setting image parameters for lim: %w", err)
 		}
 
 		operMng.AddImageProvider(&iLim)
@@ -214,27 +222,26 @@ func NewImgSrv(port string, db *sql.DB) *ImgSrv {
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
 	if err != nil {
-		logger.Error("Error create Rest %v", err)
-		panic(fmt.Sprintf("error create Rest %v", err))
+		logger.Error("Error create Rest", "error", err)
+		return nil, fmt.Errorf("error create Rest: %w", err)
 	}
 
 	imgsrv.restObj = restObj
 
-	return &imgsrv
+	return &imgsrv, nil
 }
 
 func (app *ImgSrv) Start() error {
-	//TODO Надо возвращать ошибки
 	app.metrics.Start()
-	err := app.dirManager.Start()
-	if err != nil {
+
+	if err := app.dirManager.Start(); err != nil {
 		app.logger.Error("Error start dirManager", "error", err)
+		return fmt.Errorf("error start dirManager: %w", err)
 	}
 
-	err = app.operManager.Start()
-	if err != nil {
+	if err := app.operManager.Start(); err != nil {
 		app.logger.Error("Error start operManager", "error", err)
-		panic(fmt.Errorf("error start operManager: %v", err))
+		return fmt.Errorf("error start operManager: %w", err)
 	}
 
 	metrics.StartMetricsLogging(app.logger, 60*time.Minute)
@@ -243,6 +250,10 @@ func (app *ImgSrv) Start() error {
 		gocron.WithLogger(
 			gocron.NewLogger(app.scheduleLogLevel),
 		))
+	if err != nil {
+		app.logger.Error("Error create scheduler", "error", err)
+		return fmt.Errorf("error create scheduler: %w", err)
+	}
 	app.scheduler = scheduler
 
 	// Проверка статуса невыполненных заданий
@@ -277,7 +288,7 @@ func (app *ImgSrv) Start() error {
 	)
 
 	// Обновление данных провайдера локальных изображений
-	if app.lim != nil {
+	if app.lim != nil && app.lim.IsReadyForRequest() {
 		app.logger.Debug("Create refresh local image provider task")
 		_, err = app.scheduler.NewJob(
 			gocron.CronJob(
@@ -311,8 +322,10 @@ func (app *ImgSrv) Start() error {
 	app.backupCancel = cancelBackup
 	dbase.StartAutoBackup(ctxBackup, app.logger, app.db) // или твой путь
 
-	err = app.restObj.Start()
-	app.logger.Error("Error start rest", "error", err)
+	if err := app.restObj.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		app.logger.Error("Error start rest", "error", err)
+		return fmt.Errorf("error start rest: %w", err)
+	}
 
 	return nil
 }
@@ -365,7 +378,7 @@ func readOptions() (ApplOptions, error) {
 	err := yaml.Unmarshal(plan, &data)
 
 	if data.ImageLimitMin >= data.ImageLimitMax {
-		panic("Option image_amount_min must be lower then image_amount_max")
+		return data, fmt.Errorf("option image_amount_min must be lower than image_amount_max")
 	}
 
 	return data, err

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"html/template"
 	"imgserver/internal/pkg/helpers"
 	"imgserver/internal/pkg/localimageprovider"
@@ -21,6 +20,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 const (
@@ -113,8 +114,6 @@ func (rest *Rest) handleStatusAPI(w http.ResponseWriter, r *http.Request) {
 	data := rest.getPageData()
 
 	sendJSONResponse(w, http.StatusOK, data)
-	//w.Header().Set("Content-Type", "application/json")
-	//json.NewEncoder(w).Encode(data)
 }
 
 func (rest *Rest) getPrompts() PromptsData {
@@ -360,7 +359,7 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 
 // Функция для обработки POST-запросов к /operation/start
 func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
-
+	rest.logger.Debug("Start operation")
 	// Создаем ответ
 	var startResp StartResponse
 	var errorAttrs ErrorAttributes
@@ -389,6 +388,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 
 	operationId, err := rest.operMng.StartOperation(startReq.Type, startReq.Prompt)
 	if err != nil {
+		rest.logger.Error("Start operation error", "error", err.Error())
 		errorAttrs.Code = "StartError"
 		errorAttrs.Message = "Can not start operation"
 		errorAttrs.DevMessage = err.Error()
@@ -402,6 +402,7 @@ func (rest *Rest) handleStartOperation(w http.ResponseWriter, r *http.Request) {
 	startResp.ID = operationId
 	startResp.Status = opermanager.StatusPending
 	rest.incrRequestMetric(METRIC_OPERATION_START, false)
+	rest.logger.Debug("Operation started", "operationId", operationId)
 	sendJSONResponse(w, http.StatusOK, startResp)
 }
 
@@ -427,14 +428,9 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code := "prmt_" + time.Now().Format("2006_01_02_15_04_05")
+	code := promptmanager.GeneratePromptCode()
 
-	promptValue := promptmanager.Prompt{Code: code, Prompt: promptReq.Prompt, Placeholders: nil}
-	if promptReq.Negative != nil {
-		promptValue.Negative = promptReq.Negative
-	}
-
-	_, err = rest.promptManager.AddNewPrompt(promptValue)
+	_, err = rest.addPrompt(code, promptReq.Prompt, promptReq.Negative, nil)
 	if err != nil {
 		errorAttrs.Code = "PromptError"
 		errorAttrs.Message = "Can not add new prompt"
@@ -601,6 +597,29 @@ func (rest *Rest) handleCreateGlobalPlaceholder(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusOK)
 	return
 }
+
+// addPrompt собирает promptmanager.Prompt из переданных полей и добавляет его.
+// Общий билдер для всех способов создания промптов.
+func (rest *Rest) addPrompt(code, text string, negative *string, placeholders []PlaceholderDetail) (string, error) {
+	prompt := promptmanager.Prompt{
+		Code:     code,
+		Prompt:   text,
+		Negative: negative,
+	}
+	if placeholders != nil {
+		ph := make(map[string][]string)
+		for _, p := range placeholders {
+			values := make([]string, 0, len(p.Values))
+			for _, v := range p.Values {
+				values = append(values, v)
+			}
+			ph[p.Name] = values
+		}
+		prompt.Placeholders = ph
+	}
+	return rest.promptManager.AddNewPrompt(prompt)
+}
+
 func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 
 	rest.logger.Info("Create prompt from api")
@@ -616,27 +635,10 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 
 	code := promptReq.ID
 	if code == "" {
-		code = "prmt_" + time.Now().Format("06_01_02_15_04_05")
-	}
-	prompt := promptmanager.Prompt{
-		Code:     code,
-		Prompt:   promptReq.Text,
-		Negative: promptReq.Negative,
+		code = promptmanager.GeneratePromptCode()
 	}
 
-	if promptReq.Placeholders != nil {
-		placeholders := make(map[string][]string)
-		for _, ph := range promptReq.Placeholders {
-			values := make([]string, 0, len(ph.Values))
-			for _, value := range ph.Values {
-				values = append(values, value)
-			}
-			placeholders[ph.Name] = values
-		}
-		prompt.Placeholders = placeholders
-	}
-
-	newCode, err := rest.promptManager.AddNewPrompt(prompt)
+	newCode, err := rest.addPrompt(code, promptReq.Text, promptReq.Negative, promptReq.Placeholders)
 	if err != nil {
 		rest.logger.Error("Cannot add prompt", "error", err)
 		http.Error(w, "Cannot add prompt: "+err.Error(), http.StatusUnprocessableEntity)
@@ -648,8 +650,9 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(map[string]string{"ID": newCode}); err != nil {
 		log.Printf("Ошибка кодирования JSON: %v", err)
 		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
 	}
-	w.WriteHeader(http.StatusOK)
+
 	return
 
 }
