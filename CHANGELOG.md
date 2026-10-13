@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.09.0
+**РЕКОМЕНДУЕТСЯ ПРОШИТЬ РАМКУ**: версией 1.04
+- Turn from YandexArt async deprecated  method to recommended sync YandexOpenAi
+- Fix some minor bugs
+- 
 ## 1.08.0
 - Change prompt index to prompt code [#30](https://github.com/maxifly/ImageServer/issues/30)
 - Add prompt statistic [#29](https://github.com/maxifly/ImageServer/issues/29)

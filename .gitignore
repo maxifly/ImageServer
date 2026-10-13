@@ -9,3 +9,5 @@ src/black.jpeg
 src/tmp_images/
 
 src/internal/pkg/dirmanager/tests/dm/testDir/
+
+src/ydart_tmp.bin
