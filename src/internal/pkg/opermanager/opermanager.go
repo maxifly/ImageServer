@@ -245,25 +245,45 @@ func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
 }
 
 func (op *OperMngr) chooseImageProvider() *ImageProvider {
-	// Перебираем провайдеров которые могут принять задание
+	// Перебираем неархивных провайдеров, которые могут принять задание
 	var readyProviders []int
 	for idx, pr := range op.imageProviders {
-		if (*pr).IsReadyForRequest() {
+		if !(*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
 			readyProviders = append(readyProviders, idx)
 		}
 	}
 
-	if len(readyProviders) == 0 {
-		return nil
-	} else if len(readyProviders) == 1 {
-		op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[0]]).GetImageProviderForImageServerName())
-		return op.imageProviders[readyProviders[0]]
+	provider := op.getRandomImageProvider(readyProviders)
+
+	if provider != nil {
+		return provider
 	}
 
-	idx := rand.Intn(len(readyProviders))
-	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[idx]]).GetImageProviderForImageServerName())
+	// Перебираем архивных провайдеров, которые могут принять задание
+	var archProviders []int
+	for idx, pr := range op.imageProviders {
+		if (*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
+			archProviders = append(archProviders, idx)
+		}
+	}
 
-	return op.imageProviders[readyProviders[idx]]
+	provider = op.getRandomImageProvider(archProviders)
+	return provider
+}
+
+func (op *OperMngr) getRandomImageProvider(providers []int) *ImageProvider {
+
+	if len(providers) == 0 {
+		return nil
+	} else if len(providers) == 1 {
+		op.logger.Debug("Choose provider", "provider", (*op.imageProviders[providers[0]]).GetImageProviderForImageServerName())
+		return op.imageProviders[providers[0]]
+	}
+
+	idx := rand.Intn(len(providers))
+	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[providers[idx]]).GetImageProviderForImageServerName())
+
+	return op.imageProviders[providers[idx]]
 }
 
 func (op *OperMngr) startAutoOperation() (string, error) {
