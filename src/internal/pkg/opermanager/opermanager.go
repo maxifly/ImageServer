@@ -202,7 +202,11 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 		return op.startProviderOperation(provider, genParameters, true)
 	} else if optype == "old" {
 		// Запрошено старое изображение
-		return op.startOldPictureOperation()
+		provider := op.chooseArchiveImageProvider()
+		if provider == nil {
+			return "", fmt.Errorf("no ready archive image provider")
+		}
+		return op.startProviderOperation(provider, nil, true)
 	}
 
 	return op.startAutoOperation()
@@ -299,6 +303,7 @@ func (op *OperMngr) getRandomImageProvider(providers []int) *ImageProvider {
 func (op *OperMngr) startAutoOperation() (string, error) {
 	op.logger.Info("Start auto operation")
 	now := time.Now()
+	var provider *ImageProvider = nil
 
 	st := op.checkSleepTime(now)
 
@@ -307,63 +312,40 @@ func (op *OperMngr) startAutoOperation() (string, error) {
 		if st.BlackImageMode {
 			return op.startBlackPictureOperation()
 		} else {
-			return op.startOldPictureOperation()
+			provider = op.chooseArchiveImageProvider()
+		}
+	} else {
+		if op.actioner.ThresholdOut(now) {
+			op.logger.Debug("Threshold")
+			// Внешний провайдер давно не вызывался
+			provider = op.chooseImageProvider()
+		} else {
+			provider = op.chooseArchiveImageProvider()
 		}
 	}
+	if provider == nil {
+		return "", fmt.Errorf("no ready image provider")
+	}
 
-	if op.actioner.ThresholdOut(now) {
-		op.logger.Debug("Threshold")
-		// Внешний провайдер давно не вызывался
-		provider := op.chooseImageProvider()
+	operation, err := op.startProviderOperation(provider, nil, false)
 
-		if provider == nil {
-			op.logger.Debug("Ready provider is nil")
-			// Вызываем менеджер старых изображений
-			return op.startOldPictureOperation()
-		}
-		operation, err := op.startProviderOperation(provider, nil, false)
-		if err != nil {
-			return "", err
-		}
+	if err != nil {
+		return "", err
+	}
+
+	if !(*provider).GetProperties().IsArchiveImageProvider {
 		// Обновляем время последнего вызова
 		op.actioner.SetLastCallTime(now)
-		return operation, nil
-	} else {
-		// Вызываем менеджер старых изображений
-		return op.startOldPictureOperation()
 	}
+	return operation, nil
 }
 
 func (op *OperMngr) startBlackPictureOperation() (string, error) {
 	op.logger.Info("Start black picture operation")
-	return op.startGetOldPictureFromLocalStorageOperation(true)
-}
-func (op *OperMngr) startOldPictureOperation() (string, error) {
-	op.logger.Info("Start old picture operation")
-	return op.startGetOldPictureFromLocalStorageOperation(false)
-}
-
-func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture bool) (string, error) {
+	file := BLACK_FILE_NAME
 	id := op.generateId()
-	var file string
-	if getBlackPicture {
-		file = BLACK_FILE_NAME
-	} else {
-		originalFile := op.dirManager.GetRandomFile()
-		imgBytes, err := os.ReadFile(originalFile)
 
-		if err != nil {
-			return id, fmt.Errorf("error when read file: %w", err)
-		}
-
-		file, err = op.saveFiles(id, imgBytes, false)
-		if err != nil {
-			return id, err
-		}
-
-	}
-
-	op.logger.Info("Start old picture operation", "file", file)
+	op.logger.Info("Choose black file", "file", file)
 	operation := Operation{
 		Id:         id,
 		ExternalId: "dirManagerOperation",
@@ -375,9 +357,8 @@ func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture 
 		},
 	}
 	op.completeOperations.SetDefault(operation.Id, &operation)
-	op.logger.Info("Start old picture operation", "operationId", operation.Id, "file", operation.FileName)
+	op.logger.Info("Start black picture operation", "operationId", operation.Id, "file", operation.FileName)
 	return operation.Id, nil
-
 }
 
 func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error) {
