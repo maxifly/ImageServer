@@ -245,29 +245,39 @@ func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
 }
 
 func (op *OperMngr) chooseImageProvider() *ImageProvider {
-	// Перебираем неархивных провайдеров, которые могут принять задание
-	var readyProviders []int
-	for idx, pr := range op.imageProviders {
-		if !(*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
-			readyProviders = append(readyProviders, idx)
-		}
-	}
-
-	provider := op.getRandomImageProvider(readyProviders)
+	provider := op.chooseNotArchiveImageProvider()
 
 	if provider != nil {
 		return provider
 	}
 
-	// Перебираем архивных провайдеров, которые могут принять задание
-	var archProviders []int
+	provider = op.chooseArchiveImageProvider()
+	return provider
+}
+
+func (op *OperMngr) chooseNotArchiveImageProvider() *ImageProvider {
+	// Перебираем неархивных провайдеров, которые могут принять задание
+	var providers []int
 	for idx, pr := range op.imageProviders {
-		if (*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
-			archProviders = append(archProviders, idx)
+		if !(*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
+			providers = append(providers, idx)
 		}
 	}
 
-	provider = op.getRandomImageProvider(archProviders)
+	provider := op.getRandomImageProvider(providers)
+	return provider
+}
+
+func (op *OperMngr) chooseArchiveImageProvider() *ImageProvider {
+	// Перебираем архивных провайдеров, которые могут принять задание
+	var providers []int
+	for idx, pr := range op.imageProviders {
+		if (*pr).GetProperties().IsArchiveImageProvider && (*pr).IsReadyForRequest() {
+			providers = append(providers, idx)
+		}
+	}
+
+	provider := op.getRandomImageProvider(providers)
 	return provider
 }
 
