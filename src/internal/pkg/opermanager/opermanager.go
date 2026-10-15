@@ -263,7 +263,7 @@ func (op *OperMngr) chooseImageProvider() *ImageProvider {
 	idx := rand.Intn(len(readyProviders))
 	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[idx]]).GetImageProviderForImageServerName())
 
-	return op.imageProviders[idx]
+	return op.imageProviders[readyProviders[idx]]
 }
 
 func (op *OperMngr) startAutoOperation() (string, error) {
