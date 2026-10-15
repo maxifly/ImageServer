@@ -277,40 +277,6 @@ func (ydArt *YdArt) GetImageSlice(operationId string) (bool, []byte, error) {
 	return true, imageData, nil
 }
 
-// Deprecated: old async realisation
-func (ydArt *YdArt) GetImageSliceOld(operationId string) (bool, []byte, error) {
-	ydArt.logger.Debug("Get image request")
-	url := fmt.Sprintf("%s/operations/%s", CoreBaseURL, operationId)
-	var response getImageResponse
-	err := ydArt.innerRequest("GET", url, http.StatusOK, nil, &response)
-	if err != nil {
-		resultError := fmt.Errorf("error when get image: %w", err)
-		return false, nil, resultError
-	}
-
-	if response.Done {
-		if response.Error != "" {
-			resultError := fmt.Errorf("error from YandexArt: %s", response.Error)
-			ydArt.logger.Error("YandexArt error", "errorCode", response.ErrorCode, "error", response.Error, "detail", response.ErrorDetails)
-			return true, nil, resultError
-		}
-		if response.Response.Image != "" {
-			imageData, err := ydArt.ipr.ConvertBase64ToJpg(response.Response.Image)
-			if err != nil {
-				resultError := fmt.Errorf("error image processing: %w", err)
-				ydArt.logger.Error(resultError.Error())
-				return false, nil, resultError
-			}
-			return true, imageData, nil
-		} else {
-			resultError := fmt.Errorf("field image is empty")
-			return false, nil, resultError
-		}
-	}
-	// Задача не завершена
-	return false, nil, nil
-}
-
 func (ydArt *YdArt) IsReadyForRequest() bool {
 	if !ydArt.actioner.ThresholdOut(time.Now()) {
 		// Провайдер вызывался недавно. Он не готов к новому вызову.

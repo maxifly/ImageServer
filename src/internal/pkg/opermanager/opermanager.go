@@ -21,16 +21,8 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// Определяем тип Status как новый тип на основе int
-type generatorType int
-
-// Определяем константы для статусов с использованием iota
-const (
-	YandexArt  generatorType = iota // 0
-	OldPicture                      // 1
-)
-
 const BLACK_FILE_NAME = "black.jpeg"
+const BLACK_PICTURE_OPERATION_TYPE = "BlackPicture"
 const TEMPORARY_IMAGE_DIR = "tmp_images"
 
 type Status string
@@ -60,11 +52,10 @@ type NextGenerationData struct {
 }
 
 type OperMngr struct {
-	pendingOperations        *cache.Cache
-	completeOperations       *cache.Cache
-	logger                   *slog.Logger
-	imageProviders           []*ImageProvider
-	imageProvidersWithPrompt []*ImageProvider
+	pendingOperations  *cache.Cache
+	completeOperations *cache.Cache
+	logger             *slog.Logger
+	imageProviders     []*ImageProvider
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
 	dirManagerTemp  *dirmanager.DirManager
@@ -87,7 +78,7 @@ type Operation struct {
 	Provider   *ImageProvider
 	ExternalId string
 	FileName   string
-	Type       generatorType
+	Type       string
 	status     *OperStatus
 }
 
@@ -124,9 +115,6 @@ func NewOperMngr(thresholdMinutes int,
 
 func (op *OperMngr) AddImageProvider(imageProvider *ImageProvider) {
 	op.imageProviders = append(op.imageProviders, imageProvider)
-	if (*imageProvider).GetProperties().IsCanWorkWithPrompt {
-		op.imageProvidersWithPrompt = append(op.imageProvidersWithPrompt, imageProvider)
-	}
 }
 
 func (op *OperMngr) Start() error {
@@ -191,9 +179,15 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 		op.logger.Info("Start queued operation")
 		return op.startQueueOperation(next)
 	} else if optype == "ydart" {
+		// TODO Надо явно указать как-то что это внешний провайдер (причём в некоторых случаях работающий строго с промптом)
 		// Запрошена явная генерация внешним провайдером
 		op.logger.Info("Start direct provider operation")
-		provider := op.getImageProvider(len(prompt) > 0)
+		provider := op.chooseDirectNotArchiveImageProvider(len(prompt) > 0)
+
+		if provider == nil {
+			op.logger.Info("No suitable non-archive image provider")
+			return "", fmt.Errorf("no suitable non-archive image provider")
+		}
 
 		var genParameters *GenerationParameters = nil
 		if len(prompt) > 0 {
@@ -202,7 +196,11 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 		return op.startProviderOperation(provider, genParameters, true)
 	} else if optype == "old" {
 		// Запрошено старое изображение
-		return op.startOldPictureOperation()
+		provider := op.chooseArchiveImageProvider()
+		if provider == nil {
+			return "", fmt.Errorf("no ready archive image provider")
+		}
+		return op.startProviderOperation(provider, nil, true)
 	}
 
 	return op.startAutoOperation()
@@ -218,57 +216,74 @@ func (op *OperMngr) getImageProviderByCode(providerCode string) (*ImageProvider,
 	return nil, false
 }
 
-func (op *OperMngr) getImageProvider(withPrompt bool) *ImageProvider {
-	if withPrompt {
-		if len(op.imageProvidersWithPrompt) == 1 {
-			op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[0]).GetImageProviderForImageServerName())
-			return op.imageProvidersWithPrompt[0]
-		}
+func (op *OperMngr) chooseImageProvider() *ImageProvider {
+	provider := op.chooseNotArchiveImageProvider()
 
-		idx := rand.Intn(len(op.imageProvidersWithPrompt))
-		op.logger.Debug("Get provider", "provider", (*op.imageProvidersWithPrompt[idx]).GetImageProviderForImageServerName())
-
-		return op.imageProvidersWithPrompt[idx]
-	} else {
-
-		if len(op.imageProviders) == 1 {
-			op.logger.Debug("Get provider", "provider", (*op.imageProviders[0]).GetImageProviderForImageServerName())
-			return op.imageProviders[0]
-		}
-
-		idx := rand.Intn(len(op.imageProviders))
-		op.logger.Debug("Get provider", "provider", (*op.imageProviders[idx]).GetImageProviderForImageServerName())
-
-		return op.imageProviders[idx]
+	if provider != nil {
+		return provider
 	}
+
+	provider = op.chooseArchiveImageProvider()
+	return provider
+}
+
+func (op *OperMngr) chooseDirectNotArchiveImageProvider(withPrompt bool) *ImageProvider {
+	// Перебираем неархивных провайдеров, которые могут принять задание
+	if withPrompt {
+		return op.chooseImageProviderByMatcher(func(ip ImageProvider) bool {
+			return !(ip).GetProperties().IsArchiveImageProvider && ip.GetProperties().IsCanWorkWithPrompt
+		})
+	}
+	return op.chooseImageProviderByMatcher(func(ip ImageProvider) bool {
+		return !(ip).GetProperties().IsArchiveImageProvider
+	})
 
 }
 
-func (op *OperMngr) chooseImageProvider() *ImageProvider {
-	// Перебираем провайдеров которые могут принять задание
-	var readyProviders []int
+func (op *OperMngr) chooseNotArchiveImageProvider() *ImageProvider {
+	// Перебираем неархивных провайдеров, которые могут принять задание
+	return op.chooseImageProviderByMatcher(func(ip ImageProvider) bool {
+		return !(ip).GetProperties().IsArchiveImageProvider && ip.IsReadyForRequest()
+	})
+}
+
+func (op *OperMngr) chooseArchiveImageProvider() *ImageProvider {
+	// Перебираем архивных провайдеров, которые могут принять задание
+	return op.chooseImageProviderByMatcher(func(ip ImageProvider) bool {
+		return (ip).GetProperties().IsArchiveImageProvider && ip.IsReadyForRequest()
+	})
+}
+
+func (op *OperMngr) chooseImageProviderByMatcher(matches func(ImageProvider) bool) *ImageProvider {
+	var providers []int
 	for idx, pr := range op.imageProviders {
-		if (*pr).IsReadyForRequest() {
-			readyProviders = append(readyProviders, idx)
+		if matches(*pr) {
+			providers = append(providers, idx)
 		}
 	}
+	provider := op.getRandomImageProvider(providers)
+	return provider
+}
 
-	if len(readyProviders) == 0 {
+func (op *OperMngr) getRandomImageProvider(providers []int) *ImageProvider {
+
+	if len(providers) == 0 {
 		return nil
-	} else if len(readyProviders) == 1 {
-		op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[0]]).GetImageProviderForImageServerName())
-		return op.imageProviders[readyProviders[0]]
+	} else if len(providers) == 1 {
+		op.logger.Debug("Choose provider", "provider", (*op.imageProviders[providers[0]]).GetImageProviderForImageServerName())
+		return op.imageProviders[providers[0]]
 	}
 
-	idx := rand.Intn(len(readyProviders))
-	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[readyProviders[idx]]).GetImageProviderForImageServerName())
+	idx := rand.Intn(len(providers))
+	op.logger.Debug("Choose provider", "provider", (*op.imageProviders[providers[idx]]).GetImageProviderForImageServerName())
 
-	return op.imageProviders[idx]
+	return op.imageProviders[providers[idx]]
 }
 
 func (op *OperMngr) startAutoOperation() (string, error) {
 	op.logger.Info("Start auto operation")
 	now := time.Now()
+	var provider *ImageProvider = nil
 
 	st := op.checkSleepTime(now)
 
@@ -277,67 +292,44 @@ func (op *OperMngr) startAutoOperation() (string, error) {
 		if st.BlackImageMode {
 			return op.startBlackPictureOperation()
 		} else {
-			return op.startOldPictureOperation()
+			provider = op.chooseArchiveImageProvider()
+		}
+	} else {
+		if op.actioner.ThresholdOut(now) {
+			op.logger.Debug("Threshold")
+			// Внешний провайдер давно не вызывался
+			provider = op.chooseImageProvider()
+		} else {
+			provider = op.chooseArchiveImageProvider()
 		}
 	}
+	if provider == nil {
+		return "", fmt.Errorf("no ready image provider")
+	}
 
-	if op.actioner.ThresholdOut(now) {
-		op.logger.Debug("Threshold")
-		// Внешний провайдер давно не вызывался
-		provider := op.chooseImageProvider()
+	operation, err := op.startProviderOperation(provider, nil, false)
 
-		if provider == nil {
-			op.logger.Debug("Ready provider is nil")
-			// Вызываем менеджер старых изображений
-			return op.startOldPictureOperation()
-		}
-		operation, err := op.startProviderOperation(provider, nil, false)
-		if err != nil {
-			return "", err
-		}
+	if err != nil {
+		return "", err
+	}
+
+	if !(*provider).GetProperties().IsArchiveImageProvider {
 		// Обновляем время последнего вызова
 		op.actioner.SetLastCallTime(now)
-		return operation, nil
-	} else {
-		// Вызываем менеджер старых изображений
-		return op.startOldPictureOperation()
 	}
+	return operation, nil
 }
 
 func (op *OperMngr) startBlackPictureOperation() (string, error) {
 	op.logger.Info("Start black picture operation")
-	return op.startGetOldPictureFromLocalStorageOperation(true)
-}
-func (op *OperMngr) startOldPictureOperation() (string, error) {
-	op.logger.Info("Start old picture operation")
-	return op.startGetOldPictureFromLocalStorageOperation(false)
-}
-
-func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture bool) (string, error) {
+	file := BLACK_FILE_NAME
 	id := op.generateId()
-	var file string
-	if getBlackPicture {
-		file = BLACK_FILE_NAME
-	} else {
-		originalFile := op.dirManager.GetRandomFile()
-		imgBytes, err := os.ReadFile(originalFile)
 
-		if err != nil {
-			return id, fmt.Errorf("error when read file: %w", err)
-		}
-
-		file, err = op.saveFiles(id, imgBytes, false)
-		if err != nil {
-			return id, err
-		}
-
-	}
-
-	op.logger.Info("Start old picture operation", "file", file)
+	op.logger.Info("Choose black file", "file", file)
 	operation := Operation{
 		Id:         id,
 		ExternalId: "dirManagerOperation",
-		Type:       OldPicture,
+		Type:       BLACK_PICTURE_OPERATION_TYPE,
 		FileName:   file,
 		status: &OperStatus{
 			Status: StatusDone,
@@ -345,9 +337,8 @@ func (op *OperMngr) startGetOldPictureFromLocalStorageOperation(getBlackPicture 
 		},
 	}
 	op.completeOperations.SetDefault(operation.Id, &operation)
-	op.logger.Info("Start old picture operation", "operationId", operation.Id, "file", operation.FileName)
+	op.logger.Info("Start black picture operation", "operationId", operation.Id, "file", operation.FileName)
 	return operation.Id, nil
-
 }
 
 func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error) {
@@ -364,6 +355,10 @@ func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error
 func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameters *GenerationParameters, isDirectCall bool) (string, error) {
 	op.logger.Info("Start provider operation", "isDirectCall", isDirectCall)
 
+	if provider == nil || (*provider) == nil {
+		op.logger.Error("image provider is not selected")
+		return "", fmt.Errorf("image provider is not selected")
+	}
 	providerMetric := op.metrics.GetRequestTypeMetricsSafe(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
 
 	var externalId string
@@ -391,7 +386,7 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameter
 		Id:         op.generateId(),
 		Provider:   provider,
 		ExternalId: externalId,
-		Type:       YandexArt,
+		Type:       (*provider).GetImageProviderCode(),
 		status: &OperStatus{
 			Status: StatusPending,
 			Error:  "",

@@ -6,8 +6,9 @@ type ImageParameters struct {
 }
 
 type ProviderProperties struct {
-	IsCanWorkWithPrompt  bool
-	IsNeedSaveLocalFiles bool
+	IsCanWorkWithPrompt    bool
+	IsNeedSaveLocalFiles   bool
+	IsArchiveImageProvider bool
 }
 
 type GenerationParameters struct {

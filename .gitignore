@@ -11,3 +11,7 @@ src/tmp_images/
 src/internal/pkg/dirmanager/tests/dm/testDir/
 
 src/ydart_tmp.bin
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+/tasks/
