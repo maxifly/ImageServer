@@ -21,16 +21,8 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// Определяем тип Status как новый тип на основе int
-type generatorType int
-
-// Определяем константы для статусов с использованием iota
-const (
-	YandexArt  generatorType = iota // 0
-	OldPicture                      // 1
-)
-
 const BLACK_FILE_NAME = "black.jpeg"
+const BLACK_PICTURE_OPERATION_TYPE = "BlackPicture"
 const TEMPORARY_IMAGE_DIR = "tmp_images"
 
 type Status string
@@ -87,7 +79,7 @@ type Operation struct {
 	Provider   *ImageProvider
 	ExternalId string
 	FileName   string
-	Type       generatorType
+	Type       string
 	status     *OperStatus
 }
 
@@ -349,7 +341,7 @@ func (op *OperMngr) startBlackPictureOperation() (string, error) {
 	operation := Operation{
 		Id:         id,
 		ExternalId: "dirManagerOperation",
-		Type:       OldPicture,
+		Type:       BLACK_PICTURE_OPERATION_TYPE,
 		FileName:   file,
 		status: &OperStatus{
 			Status: StatusDone,
@@ -402,7 +394,7 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameter
 		Id:         op.generateId(),
 		Provider:   provider,
 		ExternalId: externalId,
-		Type:       YandexArt,
+		Type:       (*provider).GetImageProviderCode(),
 		status: &OperStatus{
 			Status: StatusPending,
 			Error:  "",
