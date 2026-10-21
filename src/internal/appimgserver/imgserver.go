@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"imgserver/internal/pkg/archimageprovider"
 	"imgserver/internal/pkg/dbase"
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
@@ -219,6 +220,20 @@ func NewImgSrv(port string, db *sql.DB) (*ImgSrv, error) {
 		operMng.AddImageProvider(&iLim)
 		imgsrv.lim = lim
 	}
+
+	archIm, err := archimageprovider.NewAim(dirManager, imgPrmt, appMetrics, logger)
+	if err != nil {
+		logger.Error("Error create arch image provider", "error", err)
+		return nil, fmt.Errorf("error create arch image provider: %w", err)
+	}
+	iArchIm := (opermanager.ImageProvider)(archIm)
+	err = iArchIm.SetImageParameters(&imageParameters)
+	if err != nil {
+		logger.Error("Error setting image parameters for archIm", "error", err)
+		return nil, fmt.Errorf("error setting image parameters for archIm: %w", err)
+	}
+
+	operMng.AddImageProvider(&iArchIm)
 
 	restObj, err := rest.NewRest(port, logger, operMng, promptManager, appMetrics)
 	if err != nil {
