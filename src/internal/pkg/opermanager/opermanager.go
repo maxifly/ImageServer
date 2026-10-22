@@ -35,6 +35,13 @@ const (
 	StatusError   Status = "error"
 )
 
+type OperationStage string
+
+const (
+	OperationStagePrompt OperationStage = "prompt_generation"
+	OperationStageImage  OperationStage = "image_generation"
+)
+
 const (
 	METRIC_TEMPLATE_OPERATION_START  = "OPERATION_START_"
 	METRIC_TEMPLATE_OPERATION_STATUS = "OPERATION_STATUS_"
@@ -80,6 +87,7 @@ type Operation struct {
 	FileName   string
 	Type       string
 	status     *OperStatus
+	stage      OperationStage
 }
 
 func NewOperMngr(thresholdMinutes int,
@@ -330,6 +338,7 @@ func (op *OperMngr) startBlackPictureOperation() (string, error) {
 		Id:         id,
 		ExternalId: "dirManagerOperation",
 		Type:       BLACK_PICTURE_OPERATION_TYPE,
+		stage:      OperationStageImage,
 		FileName:   file,
 		status: &OperStatus{
 			Status: StatusDone,
@@ -387,6 +396,7 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameter
 		Provider:   provider,
 		ExternalId: externalId,
 		Type:       (*provider).GetImageProviderCode(),
+		stage:      OperationStageImage,
 		status: &OperStatus{
 			Status: StatusPending,
 			Error:  "",
