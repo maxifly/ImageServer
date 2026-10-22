@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"imgserver/internal/pkg/promptmanager"
 	"log/slog"
+	"strings"
 )
 
 type YdPr struct {
@@ -30,11 +31,7 @@ func (ydpr *YdPr) Resolve(request PromptRequest) (PromptResolveResult, error) {
 		return ydpr.promptRaw(request.Prompt)
 	}
 
-	return PromptResolveResult{
-		Prompt:      request.Prompt,
-		IsPending:   false,
-		OperationID: "",
-	}, errors.New("invalid prompt request type")
+	return ydpr.errorResult(errors.New("invalid prompt request type"))
 
 }
 
@@ -51,29 +48,65 @@ func (ydpr *YdPr) CheckOperation(operationID string) (PromptResolveResult, error
 }
 
 func (ydpr *YdPr) promptById(promptId string) (PromptResolveResult, error) {
+	if strings.TrimSpace(promptId) == "" {
+		err := errors.New("prompt id cannot be empty")
+		ydpr.logger.Error("Invalid prompt id", "error", err)
+		return ydpr.errorResult(err)
+	}
+
+	prompt, ok := ydpr.promptManager.GetPromptByCode(promptId)
+	if !ok {
+		ydpr.logger.Error("Cannot find prompt", "id", promptId)
+		return ydpr.errorResult(errors.New("cannot find prompt"))
+	}
+
+	promptValue := ydpr.promptManager.GetPromptValue(prompt)
+	return ydpr.promptRaw(&promptValue)
 
 }
 
 func (ydpr *YdPr) promptRandom() (PromptResolveResult, error) {
+	prompt, err := ydpr.promptManager.GetRandomPromptValue()
+	if err != nil {
+		ydpr.logger.Error("Error when get prompt", "error", err.Error())
 
+		return ydpr.promptDefault()
+	}
+
+	return ydpr.promptRaw(&prompt)
 }
 
 func (ydpr *YdPr) promptRaw(prompt *promptmanager.PromptValue) (PromptResolveResult, error) {
-	//TODO make
+	if prompt == nil {
+		return ydpr.errorResult(errors.New("prompt cannot be nil"))
+	}
 	if prompt.IsGemma {
 		return ydpr.promptGemma(prompt)
 	}
 	return PromptResolveResult{
-		prompt,
-		"",
-		false,
+		Prompt:    prompt,
+		IsPending: false,
 	}, nil
 }
 
 func (ydpr *YdPr) promptGemma(prompt *promptmanager.PromptValue) (PromptResolveResult, error) {
+	return ydpr.errorResult(fmt.Errorf("not supported"))
+}
+
+func (ydpr *YdPr) promptDefault() (PromptResolveResult, error) {
+	ydpr.logger.Debug("Return default prompt", "prompt", "test")
 	return PromptResolveResult{
-		nil,
-		"123",
-		false,
-	}, fmt.Errorf("not supported")
+		Prompt: &promptmanager.PromptValue{
+			Prompt:  "test",
+			IsGemma: false,
+		},
+		IsPending: false,
+	}, nil
+}
+
+func (ydpr *YdPr) errorResult(errorV error) (PromptResolveResult, error) {
+	return PromptResolveResult{
+		Prompt:    nil,
+		IsPending: false,
+	}, errorV
 }
