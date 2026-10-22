@@ -1,6 +1,7 @@
 package opermanager
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -9,10 +10,38 @@ import (
 
 	"imgserver/internal/pkg/actioner"
 	appmetrics "imgserver/internal/pkg/metrics"
+	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/promptresolver"
 	"imgserver/internal/pkg/timerange"
 
 	"github.com/patrickmn/go-cache"
 )
+
+type testPromptResolver struct{}
+
+func (resolver *testPromptResolver) Resolve(request promptresolver.PromptRequest) (promptresolver.PromptResolveResult, error) {
+	switch request.Type {
+	case promptresolver.PromptRequestRandom:
+		return promptresolver.PromptResolveResult{
+			Prompt: &promptmanager.PromptValue{Prompt: "test random prompt"},
+		}, nil
+	case promptresolver.PromptRequestByID:
+		return promptresolver.PromptResolveResult{
+			Prompt: &promptmanager.PromptValue{Prompt: request.PromptID},
+		}, nil
+	case promptresolver.PromptRequestRaw:
+		if request.Prompt == nil {
+			return promptresolver.PromptResolveResult{}, fmt.Errorf("raw prompt is nil")
+		}
+		return promptresolver.PromptResolveResult{Prompt: request.Prompt}, nil
+	default:
+		return promptresolver.PromptResolveResult{}, fmt.Errorf("unsupported prompt request type %q", request.Type)
+	}
+}
+
+func (resolver *testPromptResolver) CheckOperation(string) (promptresolver.PromptResolveResult, error) {
+	return promptresolver.PromptResolveResult{}, fmt.Errorf("unexpected prompt operation check")
+}
 
 type testImageProvider struct {
 	code                           string
@@ -88,6 +117,7 @@ func newProviderTestManager(thresholdMinutes int, sleepTimes []*SleepTime) *Oper
 	return &OperMngr{
 		pendingOperations:  cache.New(cache.NoExpiration, 0),
 		completeOperations: cache.New(cache.NoExpiration, 0),
+		promptResolver:     &testPromptResolver{},
 		logger:             logger,
 		idMutex:            NewIdMutex(),
 		actioner:           actioner.NewActioner(thresholdMinutes, time.Minute),
@@ -397,7 +427,7 @@ func TestStartDirectOperationReturnsErrorWithoutSuitableProvider(t *testing.T) {
 			name: "empty provider list",
 		},
 		{
-			name:   "archive provider only",
+			name: "archive provider only",
 			providers: func() []*testImageProvider {
 				return []*testImageProvider{newTestImageProvider("archive", true, true)}
 			},

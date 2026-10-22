@@ -40,6 +40,10 @@
                 </div>
                 {{end}}
 
+                {{if .UseAsGemma}}
+                <div class="card-text small mt-1">Промпт промпта</div>
+                {{end}}
+
                 <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis fw-normal text-nowrap"
                       title="Количество использований">
                    <i class="bi bi-lightning-charge-fill me-1"></i>{{ .UseCount }}
@@ -97,6 +101,11 @@
                     <p class="mt-3"><strong>Negative:</strong></p>
                     <pre id="viewNegativeText" class="prompt-full-text text-muted">—</pre>
 
+                    <p class="mt-3">
+                        <strong>Промпт для промпта:</strong>
+                        <span id="viewUseAsGemma">Нет</span>
+                    </p>
+
                     <p class="mt-3"><strong>Плейсхолдеры:</strong></p>
                     <div id="viewPlaceholders">
                         <em>Нет плейсхолдеров</em>
@@ -118,6 +127,11 @@
                     <div class="mb-3">
                         <label class="form-label">Negative (опционально)</label>
                         <textarea id="editNegativeText" class="form-control" rows="2" placeholder="Если нужно, укажите negative-часть"></textarea>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input id="editUseAsGemma" class="form-check-input" type="checkbox">
+                        <label class="form-check-label" for="editUseAsGemma">Промпт для промпта</label>
                     </div>
 
                     <div class="mb-3">
@@ -319,6 +333,8 @@
             negEl.style.display = 'block';
         }
 
+        document.getElementById('viewUseAsGemma').textContent = currentPrompt?.Use_as_gemma ? 'Да' : 'Нет';
+
         const phDiv = document.getElementById('viewPlaceholders');
         const phs = currentPrompt?.Placeholders || [];
         if (!phs.length) {
@@ -343,11 +359,13 @@
         if (isCreatingPrompt) {
             document.getElementById('editPromptText').value = '';
             document.getElementById('editNegativeText').value = '';
+            document.getElementById('editUseAsGemma').checked = false;
             document.getElementById('editPlaceholdersContainer').innerHTML = '<em>Нет плейсхолдеров</em>';
         } else {
             document.getElementById('editPromptText').value = currentPrompt.Text || '';
             const neg = currentPrompt.hasOwnProperty('Negative') ? (currentPrompt.Negative || '') : '';
             document.getElementById('editNegativeText').value = neg;
+            document.getElementById('editUseAsGemma').checked = Boolean(currentPrompt.Use_as_gemma);
             const container = document.getElementById('editPlaceholdersContainer');
             container.innerHTML = '';
             const phs = currentPrompt.Placeholders || [];
@@ -426,6 +444,7 @@
         if (!text) { alert('Текст обязателен'); return; }
         const negInput = document.getElementById('editNegativeText').value.trim();
         const negative = negInput === '' ? null : negInput;
+        const useAsGemma = document.getElementById('editUseAsGemma').checked;
 
         const container = document.getElementById('editPlaceholdersContainer');
         const items = container.querySelectorAll('.placeholder-item');
@@ -443,7 +462,13 @@
                 const res = await fetch('/api/prompts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ID: '', Text: text, Negative: negative, Placeholders: placeholders })
+                    body: JSON.stringify({
+                        ID: '',
+                        Text: text,
+                        Negative: negative,
+                        Use_as_gemma: useAsGemma,
+                        Placeholders: placeholders
+                    })
                 });
                 if (!res.ok) {
                     const errorMsg = await formatErrorMessage(res);
@@ -453,7 +478,13 @@
                 const res = await fetch(`/api/prompts/${encodeURIComponent(currentPrompt.ID)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ID: currentPrompt.ID, Text: text, Negative: negative, Placeholders: placeholders })
+                    body: JSON.stringify({
+                        ID: currentPrompt.ID,
+                        Text: text,
+                        Negative: negative,
+                        Use_as_gemma: useAsGemma,
+                        Placeholders: placeholders
+                    })
                 });
                 if (!res.ok) {
                     const errorMsg = await formatErrorMessage(res);

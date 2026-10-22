@@ -8,6 +8,8 @@ import (
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/metrics"
+	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/promptresolver"
 	"imgserver/internal/pkg/timerange"
 	"log/slog"
 	"math/rand"
@@ -35,6 +37,13 @@ const (
 	StatusError   Status = "error"
 )
 
+type OperationStage string
+
+const (
+	OperationStagePrompt OperationStage = "prompt_generation"
+	OperationStageImage  OperationStage = "image_generation"
+)
+
 const (
 	METRIC_TEMPLATE_OPERATION_START  = "OPERATION_START_"
 	METRIC_TEMPLATE_OPERATION_STATUS = "OPERATION_STATUS_"
@@ -47,8 +56,13 @@ type SleepTime struct {
 }
 
 type NextGenerationData struct {
+	GenerationData *GenerationData
+	Provider       string
+}
+
+type GenerationData struct {
 	GenerationParameters *GenerationParameters
-	Provider             string
+	PromptId             string
 }
 
 type OperMngr struct {
@@ -56,6 +70,7 @@ type OperMngr struct {
 	completeOperations *cache.Cache
 	logger             *slog.Logger
 	imageProviders     []*ImageProvider
+	promptResolver     promptresolver.PromptResolver
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
 	dirManagerTemp  *dirmanager.DirManager
@@ -74,20 +89,27 @@ type OperStatus struct {
 }
 
 type Operation struct {
-	Id         string
-	Provider   *ImageProvider
-	ExternalId string
-	FileName   string
-	Type       string
-	status     *OperStatus
+	Id           string
+	Provider     *ImageProvider
+	ExternalId   string
+	FileName     string
+	Type         string
+	isDirectCall bool
+	status       *OperStatus
+	stage        OperationStage
 }
 
 func NewOperMngr(thresholdMinutes int,
 	imageParameters imageprocessor.ImageParameters,
 	sleepTimes []*SleepTime,
+	promptResolver promptresolver.PromptResolver,
 	dirManager *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
 	logger *slog.Logger) (*OperMngr, error) {
+	if promptResolver == nil {
+		return nil, fmt.Errorf("prompt resolver is not configured")
+	}
+
 	pendingOperations := cache.New(1*time.Hour, 2*time.Hour)
 	completeOperations := cache.New(1*time.Hour, 2*time.Hour)
 
@@ -100,6 +122,7 @@ func NewOperMngr(thresholdMinutes int,
 	operMng := OperMngr{
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
+		promptResolver:     promptResolver,
 		dirManager:         dirManager,
 		dirManagerTemp:     dirManagerTemp,
 		logger:             logger,
@@ -164,10 +187,10 @@ func (op *OperMngr) GetProviders() []Provider {
 	return result
 }
 
-func (op *OperMngr) AddOperationIntoQueue(providerCode string, parameters GenerationParameters) error {
+func (op *OperMngr) AddOperationIntoQueue(providerCode string, generationData GenerationData) error {
 	op.mutexNG.Lock()
 	defer op.mutexNG.Unlock()
-	op.nextGeneration = &NextGenerationData{Provider: providerCode, GenerationParameters: &parameters}
+	op.nextGeneration = &NextGenerationData{Provider: providerCode, GenerationData: &generationData}
 	return nil
 }
 
@@ -177,6 +200,7 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 	if ok {
 		// В очереди есть операция. Это самый приоритетный вариант
 		op.logger.Info("Start queued operation")
+		//TODO Надо как-то подумать передавать PromptId
 		return op.startQueueOperation(next)
 	} else if optype == "ydart" {
 		// TODO Надо явно указать как-то что это внешний провайдер (причём в некоторых случаях работающий строго с промптом)
@@ -189,11 +213,12 @@ func (op *OperMngr) StartOperation(optype string, prompt string) (string, error)
 			return "", fmt.Errorf("no suitable non-archive image provider")
 		}
 
-		var genParameters *GenerationParameters = nil
+		var genData *GenerationData = nil
 		if len(prompt) > 0 {
-			genParameters = createGenerationParameters(prompt)
+			genParameters := createGenerationParameters(prompt)
+			genData = &GenerationData{GenerationParameters: genParameters}
 		}
-		return op.startProviderOperation(provider, genParameters, true)
+		return op.startProviderOperation(provider, genData, true)
 	} else if optype == "old" {
 		// Запрошено старое изображение
 		provider := op.chooseArchiveImageProvider()
@@ -330,6 +355,7 @@ func (op *OperMngr) startBlackPictureOperation() (string, error) {
 		Id:         id,
 		ExternalId: "dirManagerOperation",
 		Type:       BLACK_PICTURE_OPERATION_TYPE,
+		stage:      OperationStageImage,
 		FileName:   file,
 		status: &OperStatus{
 			Status: StatusDone,
@@ -348,52 +374,230 @@ func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error
 		return "", fmt.Errorf("provider not found/ Code: %s", data.Provider)
 	}
 
-	return op.startProviderOperation(provider, data.GenerationParameters, true)
+	return op.startProviderOperation(provider,
+		data.GenerationData,
+		true)
 
 }
 
-func (op *OperMngr) startProviderOperation(provider *ImageProvider, genParameters *GenerationParameters, isDirectCall bool) (string, error) {
+func (op *OperMngr) startProviderOperation(provider *ImageProvider, generationData *GenerationData, isDirectCall bool) (string, error) {
 	op.logger.Info("Start provider operation", "isDirectCall", isDirectCall)
 
 	if provider == nil || (*provider) == nil {
 		op.logger.Error("image provider is not selected")
 		return "", fmt.Errorf("image provider is not selected")
 	}
+	if generationData != nil && generationData.PromptId != "" && generationData.GenerationParameters != nil {
+		op.logger.Error("ambiguous generation data")
+		return "", fmt.Errorf("ambiguous generation data: prompt id and generation parameters are both set")
+	}
 	providerMetric := op.metrics.GetRequestTypeMetricsSafe(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
 
 	var externalId string
 	var err error
+	var promptResult promptresolver.PromptResolveResult
 
-	if genParameters != nil {
-		op.logger.Debug("Start provider operation with prompt")
-		externalId, err = (*provider).GenerateByParameters(*genParameters, isDirectCall)
-	} else {
+	if !(*provider).GetProperties().IsCanWorkWithPrompt {
+		// Не может работать с промптом
+		// Генерируем операцию сразу генерации изображения
 		externalId, err = (*provider).Generate(isDirectCall)
+		if err != nil {
+			resultError := fmt.Errorf("error provider generate: %w", err)
+			op.logger.Error("Can not start operation", "error", resultError)
+			providerMetric.IncrementErrorRequest()
+
+			return "", resultError
+		}
+		providerMetric.IncrementSuccessRequest()
+		op.metrics.IncrementDaily(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
+
+		operation := Operation{
+			Id:         op.generateId(),
+			Provider:   provider,
+			ExternalId: externalId,
+			Type:       (*provider).GetImageProviderCode(),
+			stage:      OperationStageImage,
+			status: &OperStatus{
+				Status: StatusPending,
+				Error:  "",
+			},
+			isDirectCall: isDirectCall,
+		}
+		op.pendingOperations.SetDefault(operation.Id, &operation)
+		return operation.Id, nil
+
+	} else {
+		// Работает с промптом и операцию надо начать с обработки промпта
+
+		if generationData == nil {
+			promptResult, err = op.promptResolver.Resolve(promptresolver.PromptRequest{Type: promptresolver.PromptRequestRandom})
+		} else if generationData.PromptId != "" {
+			promptResult, err = op.promptResolver.Resolve(promptresolver.PromptRequest{Type: promptresolver.PromptRequestByID, PromptID: generationData.PromptId})
+		} else if generationData.GenerationParameters != nil {
+			promptResult, err = op.promptResolver.Resolve(promptresolver.PromptRequest{Type: promptresolver.PromptRequestRaw,
+				Prompt: &promptmanager.PromptValue{Prompt: generationData.GenerationParameters.PromptText,
+					Negative: generationData.GenerationParameters.NegativeText,
+				}})
+		}
+		if err != nil {
+			resultError := fmt.Errorf("error resolve prompt: %w", err)
+			op.logger.Error("Can not resolve prompt", "error", resultError)
+			// TODO: Добавить отдельную метрику ошибок PromptResolver вместо метрики image-провайдера.
+			providerMetric.IncrementErrorRequest()
+
+			return "", resultError
+		}
+
+		if promptResult.IsPending {
+			if promptResult.OperationID == "" {
+				resultError := fmt.Errorf("promptResult.OperationID is empty")
+				op.logger.Error("Can not resolve prompt", "error", resultError)
+				return "", resultError
+			}
+
+			externalId = promptResult.OperationID
+
+			operation := Operation{
+				Id:         op.generateId(),
+				Provider:   provider,
+				ExternalId: externalId,
+				Type:       (*provider).GetImageProviderCode(),
+				stage:      OperationStagePrompt,
+				status: &OperStatus{
+					Status: StatusPending,
+					Error:  "",
+				},
+				isDirectCall: isDirectCall,
+			}
+			op.pendingOperations.SetDefault(operation.Id, &operation)
+			return operation.Id, nil
+		}
 	}
 
+	if promptResult.Prompt != nil {
+		externalId, err = (*provider).GenerateByParameters(
+			GenerationParameters{PromptText: promptResult.Prompt.Prompt, NegativeText: promptResult.Prompt.Negative},
+			isDirectCall)
+
+		if err != nil {
+			resultError := fmt.Errorf("error provider generate: %w", err)
+			op.logger.Error("Can not start operation", "error", resultError)
+			providerMetric.IncrementErrorRequest()
+
+			return "", resultError
+		}
+
+		providerMetric.IncrementSuccessRequest()
+		op.metrics.IncrementDaily(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
+
+		operation := Operation{
+			Id:         op.generateId(),
+			Provider:   provider,
+			ExternalId: externalId,
+			Type:       (*provider).GetImageProviderCode(),
+			stage:      OperationStageImage,
+			status: &OperStatus{
+				Status: StatusPending,
+				Error:  "",
+			},
+			isDirectCall: isDirectCall,
+		}
+		op.pendingOperations.SetDefault(operation.Id, &operation)
+		return operation.Id, nil
+	}
+
+	resultError := fmt.Errorf("unexpected prompt state")
+	op.logger.Error("Can not start operation", "error", resultError)
+	// TODO: Добавить отдельную метрику некорректного результата PromptResolver вместо метрики image-провайдера.
+	providerMetric.IncrementErrorRequest()
+
+	return "", resultError
+}
+func (op *OperMngr) processPromptStage(id string, operation *Operation) (*OperStatus, error) {
+	op.logger.Debug("Process prompt stage", "id", id)
+	if operation.stage != OperationStagePrompt {
+		op.logger.Error("Can not process this stage", "stage", operation.stage)
+		return nil, fmt.Errorf("can not process this stage")
+	}
+
+	if operation.status.Status == StatusPending {
+		promptOperationResult, err := op.promptResolver.CheckOperation(operation.ExternalId)
+		if err != nil {
+			op.logger.Error("Error resolve prompt operation", "error", err)
+			return op.completeErrorOperation(id, operation, err), nil
+		}
+
+		if promptOperationResult.IsPending {
+			return &OperStatus{Status: StatusPending}, nil
+		}
+
+		if promptOperationResult.Prompt == nil || promptOperationResult.Prompt.Prompt == "" {
+			op.logger.Error("Empty prompt")
+			return op.completeErrorOperation(id, operation, fmt.Errorf("empty prompt")), nil
+		}
+
+		provider := operation.Provider
+		imageGenerateOperationId, err := (*provider).GenerateByParameters(GenerationParameters{
+			PromptText:   promptOperationResult.Prompt.Prompt,
+			NegativeText: promptOperationResult.Prompt.Negative,
+		}, operation.isDirectCall)
+		if err != nil {
+			op.logger.Error("Error start image generate operation", "error", err)
+			return op.completeErrorOperation(id, operation, err), nil
+		}
+
+		operation.ExternalId = imageGenerateOperationId
+		operation.stage = OperationStageImage
+		operation.status = &OperStatus{Status: StatusPending}
+
+		op.pendingOperations.SetDefault(operation.Id, operation)
+		return operation.status, nil
+
+	} else {
+		op.logger.Error("Unexpected prompt operation status", "status", operation.status)
+		return op.completeErrorOperation(id, operation, fmt.Errorf("unexpected prompt operation status")), nil
+	}
+}
+
+func (op *OperMngr) processImageStage(id string, operation *Operation) (*OperStatus, error) {
+	op.logger.Debug("Process image stage", "id", id)
+	if operation.stage != OperationStageImage {
+		op.logger.Error("Can not process this stage", "stage", operation.stage)
+		return nil, fmt.Errorf("can not process this stage")
+	}
+
+	provider := operation.Provider
+
+	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
+
+	ydOperationResult, imageData, err := (*provider).GetImageSlice(operation.ExternalId)
 	if err != nil {
-		resultError := fmt.Errorf("error provider generate: %w", err)
-		op.logger.Error("Can not start operation", "error", resultError)
-		providerMetric.IncrementErrorRequest()
-
-		return "", resultError
+		op.logger.Error("Get image error", "error", err)
+		return op.completeErrorOperation(id, operation, err), nil
 	}
 
-	providerMetric.IncrementSuccessRequest()
-	op.metrics.IncrementDaily(METRIC_TEMPLATE_OPERATION_START + (*provider).GetImageProviderCode())
+	if ydOperationResult {
+		op.logger.Debug("Generate image completed", "id", operation.Id)
 
-	operation := Operation{
-		Id:         op.generateId(),
-		Provider:   provider,
-		ExternalId: externalId,
-		Type:       (*provider).GetImageProviderCode(),
-		status: &OperStatus{
-			Status: StatusPending,
-			Error:  "",
-		},
+		fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
+		if err != nil {
+			op.logger.Error("Error save image files", "error", err)
+			return op.completeErrorOperation(id, operation, err), nil
+		}
+
+		op.logger.Debug("Operation completed", "id", operation.Id, "fileName", fileName)
+		operStatus := &OperStatus{Status: StatusDone, Error: ""}
+		completeOperation := operation
+		completeOperation.status = operStatus
+		completeOperation.FileName = fileName
+		op.completeOperations.SetDefault(id, completeOperation)
+		op.pendingOperations.Delete(id)
+		return operStatus, nil
+
 	}
-	op.pendingOperations.SetDefault(operation.Id, &operation)
-	return operation.Id, nil
+
+	return &OperStatus{Status: StatusPending}, nil
+
 }
 
 func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
@@ -401,47 +605,39 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 	defer op.idMutex.ReleaseLock(id)
 	lock.Lock()
 	defer lock.Unlock()
-	operation, ok := op.pendingOperations.Get(id)
+	rawOperation, ok := op.pendingOperations.Get(id)
 
 	if !ok {
 		operation, ok := op.completeOperations.Get(id)
 		if !ok {
-			resultError := fmt.Errorf("operation not found %v", id)
+			resultError := fmt.Errorf("rawOperation not found %v", id)
 			op.logger.Error("Operation not found", "error", resultError)
 			return nil, resultError
 		}
 
 		return operation.(*Operation).status, nil
 	}
-	provider := operation.(*Operation).Provider
 
-	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
-
-	ydOperationResult, imageData, err := (*provider).GetImageSlice(operation.(*Operation).ExternalId)
-	if err != nil {
-		return nil, err
+	operation := rawOperation.(*Operation)
+	switch operation.stage {
+	case OperationStagePrompt:
+		return op.processPromptStage(id, operation)
+	case OperationStageImage:
+		return op.processImageStage(id, operation)
+	default:
+		op.logger.Error("Unexpected operation stage", "stage", operation.stage)
+		return op.completeErrorOperation(id, operation, fmt.Errorf("unexpected operation stage")), nil
 	}
 
-	if ydOperationResult {
-		op.logger.Debug("Operation completed", "id", operation.(*Operation).Id)
-		operStatus := &OperStatus{Status: StatusDone, Error: ""}
+}
 
-		fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
-		if err != nil {
-			operStatus = &OperStatus{Status: StatusError, Error: err.Error()}
-		}
-
-		op.logger.Debug("Operation completed", "id", operation.(*Operation).Id, "fileName", fileName)
-
-		completeOperation := operation.(*Operation)
-		completeOperation.status = operStatus
-		completeOperation.FileName = fileName
-		op.completeOperations.SetDefault(id, completeOperation)
-		op.pendingOperations.Delete(id)
-
-	}
-
-	return &OperStatus{Status: StatusPending}, nil
+func (op *OperMngr) completeErrorOperation(id string, errorOperation *Operation, err error) *OperStatus {
+	errorOperation.status = &OperStatus{
+		Status: StatusError,
+		Error:  err.Error()}
+	op.completeOperations.SetDefault(id, errorOperation)
+	op.pendingOperations.Delete(id)
+	return errorOperation.status
 }
 
 func (op *OperMngr) saveFiles(id string, imageData []byte, isNeedSaveLocalFiles bool) (string, error) {

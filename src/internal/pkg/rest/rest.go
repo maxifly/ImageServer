@@ -237,7 +237,7 @@ func (rest *Rest) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		imageResponse.Error = &errorAttrs
 	}
 	if status.Status == opermanager.StatusError {
-		sendJSONResponse(w, http.StatusUnprocessableEntity, imageResponse)
+		sendJSONResponse(w, http.StatusOK, imageResponse)
 		rest.incrRequestMetric(METRIC_IMAGE_GET, true)
 		return
 	}
@@ -335,19 +335,16 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, ok := rest.promptManager.GetPromptByCode(generateReq.PromptID)
+	_, ok := rest.promptManager.GetPromptByCode(generateReq.PromptID)
 	if !ok {
 		rest.logger.Error("Cannot find prompt", "id", generateReq.PromptID)
 		http.Error(w, "Cannot find prompt", http.StatusUnprocessableEntity)
 		return
 	}
 
-	promptValue := rest.promptManager.GetPromptValue(prompt)
-
 	err = rest.operMng.AddOperationIntoQueue(generateReq.Provider,
-		opermanager.GenerationParameters{
-			PromptText:   promptValue.Prompt,
-			NegativeText: promptValue.Negative,
+		opermanager.GenerationData{
+			PromptId: generateReq.PromptID,
 		})
 	if err != nil {
 		rest.logger.Error("Cannot add prompt into queue", "error", err)
@@ -430,7 +427,7 @@ func (rest *Rest) handleNewPrompt(w http.ResponseWriter, r *http.Request) {
 
 	code := promptmanager.GeneratePromptCode()
 
-	_, err = rest.addPrompt(code, promptReq.Prompt, promptReq.Negative, nil)
+	_, err = rest.addPrompt(code, promptReq.Prompt, promptReq.Negative, false, nil)
 	if err != nil {
 		errorAttrs.Code = "PromptError"
 		errorAttrs.Message = "Can not add new prompt"
@@ -529,8 +526,10 @@ func (rest *Rest) handleGetPromptsPage(w http.ResponseWriter, r *http.Request) {
 			ID:              p.Code,
 			Text:            p.Prompt,
 			UseCount:        useCount,
+			UseAsGemma:      p.IsGemma(),
 			PlaceholderKeys: JoinMapKeys(p.Placeholders),
 		}
+
 		cards = append(cards, card)
 		sort.Slice(cards, func(i, j int) bool {
 			return cards[i].ID < cards[j].ID
@@ -600,11 +599,12 @@ func (rest *Rest) handleCreateGlobalPlaceholder(w http.ResponseWriter, r *http.R
 
 // addPrompt собирает promptmanager.Prompt из переданных полей и добавляет его.
 // Общий билдер для всех способов создания промптов.
-func (rest *Rest) addPrompt(code, text string, negative *string, placeholders []PlaceholderDetail) (string, error) {
+func (rest *Rest) addPrompt(code, text string, negative *string, useAsGemma bool, placeholders []PlaceholderDetail) (string, error) {
 	prompt := promptmanager.Prompt{
-		Code:     code,
-		Prompt:   text,
-		Negative: negative,
+		Code:       code,
+		Prompt:     text,
+		Negative:   negative,
+		UseAsGemma: &useAsGemma,
 	}
 	if placeholders != nil {
 		ph := make(map[string][]string)
@@ -638,7 +638,7 @@ func (rest *Rest) handleCreatePrompt(w http.ResponseWriter, r *http.Request) {
 		code = promptmanager.GeneratePromptCode()
 	}
 
-	newCode, err := rest.addPrompt(code, promptReq.Text, promptReq.Negative, promptReq.Placeholders)
+	newCode, err := rest.addPrompt(code, promptReq.Text, promptReq.Negative, promptReq.UseAsGemma, promptReq.Placeholders)
 	if err != nil {
 		rest.logger.Error("Cannot add prompt", "error", err)
 		http.Error(w, "Cannot add prompt: "+err.Error(), http.StatusUnprocessableEntity)
@@ -795,6 +795,7 @@ func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 			Text:         prompt.Prompt,
 			Negative:     prompt.Negative,
 			Placeholders: placeholders,
+			UseAsGemma:   prompt.IsGemma(),
 		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -815,9 +816,10 @@ func (rest *Rest) handlePromptByIdApi(w http.ResponseWriter, r *http.Request) {
 		}
 
 		prompt := promptmanager.Prompt{
-			Code:     promptReq.ID,
-			Prompt:   promptReq.Text,
-			Negative: promptReq.Negative,
+			Code:       promptReq.ID,
+			Prompt:     promptReq.Text,
+			Negative:   promptReq.Negative,
+			UseAsGemma: &promptReq.UseAsGemma,
 		}
 
 		if promptReq.Placeholders != nil {

@@ -21,6 +21,7 @@ import (
 type PromptValue struct {
 	Prompt   string
 	Negative *string
+	IsGemma  bool
 }
 
 func (p PromptValue) String() string {
@@ -50,7 +51,15 @@ type Prompt struct {
 	Idx          *int                `yaml:"idx,omitempty"`
 	Prompt       string              `yaml:"prompt"`
 	Negative     *string             `yaml:"negative,omitempty"`
+	UseAsGemma   *bool               `yaml:"use_as_gemma,omitempty"`
 	Placeholders map[string][]string `yaml:"placeholders,omitempty"`
+}
+
+func (p *Prompt) IsGemma() bool {
+	if p.UseAsGemma == nil {
+		return false
+	}
+	return *p.UseAsGemma
 }
 
 type PromptsData struct {
@@ -159,12 +168,12 @@ func (pm *PromptManager) GetPromptValue(prompt Prompt) PromptValue {
 	}
 
 	if !pm.templater.IsContainPlaceholders(prompt.Prompt) {
-		return PromptValue{Prompt: prompt.Prompt, Negative: prompt.Negative}
+		return PromptValue{Prompt: prompt.Prompt, Negative: prompt.Negative, IsGemma: prompt.IsGemma()}
 	}
 
 	positive1 := pm.templater.ReplacePlaceholders(prompt.Prompt, prompt.Placeholders)
 	positive := pm.templater.ReplacePlaceholders(positive1, pm.globalPlaceholders)
-	return PromptValue{Prompt: positive, Negative: prompt.Negative}
+	return PromptValue{Prompt: positive, Negative: prompt.Negative, IsGemma: prompt.IsGemma()}
 }
 
 func (pm *PromptManager) AddGlobalPlaceholder(name string, values []string) error {
@@ -564,6 +573,7 @@ func convertMapToPrompts(promptMap PromptMap) []Prompt {
 			Code:         promptValue.Code,
 			Prompt:       promptValue.Prompt,
 			Negative:     promptValue.Negative,
+			UseAsGemma:   promptValue.UseAsGemma,
 			Placeholders: promptValue.Placeholders,
 		})
 	}
@@ -585,6 +595,7 @@ func migrationPrompt(prompt Prompt) (bool, Prompt) {
 		Prompt:       prompt.Prompt,
 		Negative:     prompt.Negative,
 		Placeholders: prompt.Placeholders,
+		UseAsGemma:   prompt.UseAsGemma,
 	}
 }
 
@@ -649,9 +660,12 @@ func unionMaps(firstMap, secondMap map[string][]string) map[string][]string {
 
 // deepCopyPrompt создаёт глубокую копию одного Prompt
 func deepCopyPrompt(p Prompt) Prompt {
+	isGemma := p.IsGemma()
+
 	copied := Prompt{
-		Code:   p.Code,
-		Prompt: p.Prompt,
+		Code:       p.Code,
+		Prompt:     p.Prompt,
+		UseAsGemma: &isGemma,
 	}
 
 	// Копируем Negative, если не nil
@@ -716,6 +730,10 @@ func (p *Prompt) isEqual(prompt *Prompt) bool {
 	if (p.Negative != nil && prompt.Negative == nil) ||
 		(p.Negative == nil && prompt.Negative != nil) ||
 		(p.Negative != nil && prompt.Negative != nil && p.Negative != prompt.Negative) {
+		return false
+	}
+
+	if p.IsGemma() != prompt.IsGemma() {
 		return false
 	}
 

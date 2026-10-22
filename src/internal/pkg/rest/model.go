@@ -94,6 +94,7 @@ type PromptCardResponse struct {
 	Text            string
 	Negative        string
 	UseCount        int64
+	UseAsGemma      bool
 	PlaceholderKeys []string // только названия: ["name", "role", ...]
 }
 
@@ -118,6 +119,7 @@ type PromptDetail struct {
 	ID           string              `json:"ID"`
 	Text         string              `json:"Text"`
 	Negative     *string             `json:"Negative,omitempty"`
+	UseAsGemma   bool                `json:"Use_as_gemma"`
 	Placeholders []PlaceholderDetail `json:"Placeholders"`
 }
 
@@ -125,6 +127,7 @@ type PromptDetailRequest struct {
 	ID           string              `json:"ID"`
 	Text         string              `json:"Text"`
 	Negative     *string             `json:"Negative,omitempty"`
+	UseAsGemma   bool                `json:"Use_as_gemma"`
 	Placeholders []PlaceholderDetail `json:"Placeholders"`
 }
 

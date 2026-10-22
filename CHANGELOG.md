@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.10.0
+- Add gemma prompt for prompt generation [#32](https://github.com/maxifly/ImageServer/issues/32)
+
 ## 1.09.0
 **РЕКОМЕНДУЕТСЯ ПРОШИТЬ РАМКУ**: версией 1.04
 - Turn from YandexArt async deprecated  method to recommended sync YandexOpenAi
