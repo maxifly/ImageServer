@@ -80,6 +80,9 @@ func (ydpr *YdPr) promptRaw(prompt *promptmanager.PromptValue) (PromptResolveRes
 	if prompt == nil {
 		return ydpr.errorResult(errors.New("prompt cannot be nil"))
 	}
+	if strings.TrimSpace(prompt.Prompt) == "" {
+		return ydpr.errorResult(errors.New("prompt text cannot be empty"))
+	}
 	if prompt.IsGemma {
 		return ydpr.promptGemma(prompt)
 	}
