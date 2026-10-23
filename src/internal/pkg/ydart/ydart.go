@@ -47,10 +47,11 @@ type YdArtOptions struct {
 }
 
 type YdArt struct {
-	oapiClient      openai.Client
-	httpClient      *http.Client
+	oapiClient openai.Client
+	httpClient *http.Client
+	soptions   *YdArtSecretOption
+	// ---
 	logger          *slog.Logger
-	soptions        *YdArtSecretOption
 	options         *YdArtOptions
 	imageParameters *opermanager.ImageParameters
 	promptManager   *promptmanager.PromptManager
@@ -328,6 +329,7 @@ func (ydArt *YdArt) getPrompt() (string, error) {
 	return result, nil
 }
 
+// Deprecated
 func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, requestBody interface{}, result interface{}) error {
 	ydArt.logger.Debug("Execute get request", "url", url)
 
