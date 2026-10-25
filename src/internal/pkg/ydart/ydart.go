@@ -1,41 +1,31 @@
 package ydart
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"imgserver/internal/pkg/actioner"
 	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
 	"imgserver/internal/pkg/timerange"
-	"strconv"
+	"imgserver/internal/pkg/ydapi"
 	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 )
 
 const (
-	FILE_PATH_OPTIONS        = "/data/ydart-options.json"
-	CoreBaseURL       string = "https://llm.api.cloud.yandex.net"
-	ProviderCode             = "YandexArt"
-	YANDEX_MODEL             = "aliceai-image-art-3.0"
-	TMP_FILE                 = "ydart_tmp.bin"
+	CoreBaseURL  string = "https://llm.api.cloud.yandex.net"
+	ProviderCode        = "YandexArt"
+	YANDEX_MODEL        = "aliceai-image-art-3.0"
+	TMP_FILE            = "ydart_tmp.bin"
 )
 
 var _ opermanager.ImageProvider = (*YdArt)(nil)
-
-type YdArtSecretOption struct {
-	FolderId string `json:"folder_id"`
-	ApiKey   string `json:"api_key"`
-}
 
 type YdArtSleepTime struct {
 	TimeRange *timerange.TimeRange `yaml:"time_range"`
@@ -47,9 +37,7 @@ type YdArtOptions struct {
 }
 
 type YdArt struct {
-	oapiClient openai.Client
-	httpClient *http.Client
-	soptions   *YdArtSecretOption
+	ydApi *ydapi.YdApi
 	// ---
 	logger          *slog.Logger
 	options         *YdArtOptions
@@ -96,23 +84,10 @@ type imageResponse struct {
 	Image string `json:"image"`
 }
 
-func NewYdArt(imageParameters imageprocessor.ImageParameters, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
-	soptions, err := readSecretOptions()
-	if err != nil {
-		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
-	}
-	//logger.Debug("Options ", "options", options)
-	oapiClient := openai.NewClient(
-		option.WithAPIKey(soptions.ApiKey),
-		option.WithBaseURL("https://ai.api.cloud.yandex.net/v1"),
-		option.WithProject(soptions.FolderId),
-	)
-
+func NewYdArt(imageParameters imageprocessor.ImageParameters, ydApi *ydapi.YdApi, promptManager *promptmanager.PromptManager, logger *slog.Logger, options *YdArtOptions) *YdArt {
 	return &YdArt{
-		oapiClient:    oapiClient,
-		httpClient:    http.DefaultClient,
+		ydApi:         ydApi,
 		logger:        logger,
-		soptions:      &soptions,
 		options:       options,
 		promptManager: promptManager,
 		actioner:      actioner.NewActioner(options.ImageGenerateThreshold, time.Minute),
@@ -177,66 +152,66 @@ func (ydArt *YdArt) generateByPrompt(prompt string, isDirectCall bool) (string, 
 }
 
 // Deprecated: old async realisation
-func (ydArt *YdArt) generateByYdArtApi(prompt string, isDirectCall bool) (string, error) {
-
-	if prompt == "" {
-		return "", fmt.Errorf("prompt is empty")
-	}
-
-	ydArt.logger.Debug("generate with prompt", "prompt", prompt, "isDirect", isDirectCall)
-
-	generatePromptMessage := generatePrompt{Text: prompt,
-		Weight: 1}
-
-	ratio := aspectRatio{
-		HeightRatio: strconv.Itoa(ydArt.imageParameters.Height),
-		WidthRatio:  strconv.Itoa(ydArt.imageParameters.Weight),
-	}
-
-	generationOpt := generationOptions{
-		MimeType:    "image/jpeg",
-		AspectRatio: &ratio,
-	}
-
-	request := generateRequest{
-		ModelUri:          "art://" + ydArt.soptions.FolderId + "/yandex-art/latest",
-		Messages:          []*generatePrompt{&generatePromptMessage},
-		GenerationOptions: &generationOpt,
-	}
-
-	url := fmt.Sprintf("%s/foundationModels/v1/imageGenerationAsync", CoreBaseURL)
-	var response getImageResponse
-	err := ydArt.innerRequest("POST", url, http.StatusOK, request, &response)
-
-	if err != nil {
-		resultError := fmt.Errorf("error generate image: %w", err)
-		ydArt.logger.Error(resultError.Error())
-		return "", resultError
-	}
-
-	if response.Error != "" {
-		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
-		ydArt.logger.Error(resultError.Error())
-		return "", resultError
-	}
-
-	if response.Id == "" {
-		resultError := fmt.Errorf("YdArt return empty operatioId")
-		ydArt.logger.Error(resultError.Error())
-		return "", resultError
-	}
-
-	ydArt.logger.Debug("YandexArt operation id", "id", response.Id)
-	return response.Id, nil
-}
+//func (ydArt *YdArt) generateByYdArtApi(prompt string, isDirectCall bool) (string, error) {
+//
+//	if prompt == "" {
+//		return "", fmt.Errorf("prompt is empty")
+//	}
+//
+//	ydArt.logger.Debug("generate with prompt", "prompt", prompt, "isDirect", isDirectCall)
+//
+//	generatePromptMessage := generatePrompt{Text: prompt,
+//		Weight: 1}
+//
+//	ratio := aspectRatio{
+//		HeightRatio: strconv.Itoa(ydArt.imageParameters.Height),
+//		WidthRatio:  strconv.Itoa(ydArt.imageParameters.Weight),
+//	}
+//
+//	generationOpt := generationOptions{
+//		MimeType:    "image/jpeg",
+//		AspectRatio: &ratio,
+//	}
+//
+//	request := generateRequest{
+//		ModelUri:          "art://" + ydArt.ydApi.GetFolderId() + "/yandex-art/latest",
+//		Messages:          []*generatePrompt{&generatePromptMessage},
+//		GenerationOptions: &generationOpt,
+//	}
+//
+//	url := fmt.Sprintf("%s/foundationModels/v1/imageGenerationAsync", CoreBaseURL)
+//	var response getImageResponse
+//	err := ydArt.innerRequest("POST", url, http.StatusOK, request, &response)
+//
+//	if err != nil {
+//		resultError := fmt.Errorf("error generate image: %w", err)
+//		ydArt.logger.Error(resultError.Error())
+//		return "", resultError
+//	}
+//
+//	if response.Error != "" {
+//		resultError := fmt.Errorf("YdArt return error: %v %v", response.ErrorCode, response.ErrorMessage)
+//		ydArt.logger.Error(resultError.Error())
+//		return "", resultError
+//	}
+//
+//	if response.Id == "" {
+//		resultError := fmt.Errorf("YdArt return empty operatioId")
+//		ydArt.logger.Error(resultError.Error())
+//		return "", resultError
+//	}
+//
+//	ydArt.logger.Debug("YandexArt operation id", "id", response.Id)
+//	return response.Id, nil
+//}
 
 func (ydArt *YdArt) generateByOpenAi(prompt string) error {
 
-	model := fmt.Sprintf("art://%s/%s", ydArt.soptions.FolderId, YANDEX_MODEL)
+	model := fmt.Sprintf("art://%s/%s", ydArt.ydApi.GetFolderId(), YANDEX_MODEL)
 	//TODO Обработать ошибки правильно
 	//TODO Сохранить результат в промежуточный файл
 	//TODO Отдать как-то файл в другом методе
-	response, err := ydArt.oapiClient.Images.Generate(context.Background(), openai.ImageGenerateParams{
+	response, err := ydArt.ydApi.GetOapiClient().Images.Generate(context.Background(), openai.ImageGenerateParams{
 		Model:  openai.ImageModel(model),
 		Prompt: prompt,
 		Size:   openai.ImageGenerateParamsSize1024x1536,
@@ -329,75 +304,6 @@ func (ydArt *YdArt) getPrompt() (string, error) {
 	return result, nil
 }
 
-// Deprecated
-func (ydArt *YdArt) innerRequest(method string, url string, expectedStatus int, requestBody interface{}, result interface{}) error {
-	ydArt.logger.Debug("Execute get request", "url", url)
-
-	var req *http.Request
-	var err error
-
-	if requestBody == nil {
-		// Создаем новый HTTP-запрос
-		req, err = http.NewRequest(method, url, nil)
-	} else {
-		// Преобразуем структуру в JSON
-		jsonData, err1 := json.Marshal(requestBody)
-		if err1 != nil {
-			resultError := fmt.Errorf("error when data marshalling: %w", err1)
-			ydArt.logger.Error("error when data marshaling", resultError)
-			return resultError
-		}
-
-		req, err = http.NewRequest(method, url, bytes.NewBuffer(jsonData))
-	}
-	if err != nil {
-		resultError := fmt.Errorf("error when create request: %w", err)
-		ydArt.logger.Error(resultError.Error())
-		return resultError
-	}
-
-	// Устанавливаем заголовок авторизации
-	req.Header.Set("Authorization", fmt.Sprintf("Api-Key %s", ydArt.soptions.ApiKey))
-	req.Header.Set("Accept", "application/json") // Ожидание ответа в формате JSON
-
-	// ydArt.logger.Debug("request", "request", req)
-
-	// Выполняем запрос
-	resp, err := ydArt.httpClient.Do(req)
-	if err != nil {
-		resultError := fmt.Errorf("error when execute request: %w", err)
-		ydArt.logger.Error(resultError.Error())
-		return resultError
-	}
-
-	defer resp.Body.Close()
-
-	// Проверяем статус код
-	if resp.StatusCode != expectedStatus {
-		resultError := fmt.Errorf("unexpected status code: %s", resp.Status)
-		ydArt.logger.Error(resultError.Error())
-		ydArt.logBody(resp)
-		return resultError
-	}
-
-	// Читаем тело ответа
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		resultError := fmt.Errorf("error when read body: %w", err)
-		ydArt.logger.Error(resultError.Error())
-		return resultError
-	}
-
-	// Декодируем JSON-ответ
-	if err := json.Unmarshal(body, result); err != nil {
-		resultError := fmt.Errorf("error when parse body: %w", err)
-		ydArt.logger.Error(resultError.Error())
-		return resultError
-	}
-	ydArt.logger.Debug("Get result ")
-	return nil
-}
-
 func (ydArt *YdArt) logBody(resp *http.Response) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -407,11 +313,4 @@ func (ydArt *YdArt) logBody(resp *http.Response) {
 	}
 	ydArt.logger.Error("Get response: %s ", string(body))
 
-}
-
-func readSecretOptions() (YdArtSecretOption, error) {
-	plan, _ := os.ReadFile(FILE_PATH_OPTIONS)
-	var data YdArtSecretOption
-	err := json.Unmarshal(plan, &data)
-	return data, err
 }

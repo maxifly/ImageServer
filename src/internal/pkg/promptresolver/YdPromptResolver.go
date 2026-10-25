@@ -51,12 +51,12 @@ type YdPr struct {
 
 var _ PromptResolver = (*YdPr)(nil)
 
-func NewYdPr(promptManager *promptmanager.PromptManager, ydApi *ydapi.YdApi, logger *slog.Logger) *YdPr {
+func NewYdPr(promptManager *promptmanager.PromptManager, ydApi *ydapi.YdApi, logger *slog.Logger) (*YdPr, error) {
 	return &YdPr{
 		logger:        logger,
 		promptManager: promptManager,
 		ydApi:         ydApi,
-	}
+	}, nil
 }
 
 func (ydpr *YdPr) Resolve(request PromptRequest) (PromptResolveResult, error) {
@@ -132,10 +132,14 @@ func (ydpr *YdPr) promptRaw(prompt *promptmanager.PromptValue) (PromptResolveRes
 }
 
 func (ydpr *YdPr) promptGemma(prompt *promptmanager.PromptValue) (PromptResolveResult, error) {
+	gemmaPrompt := fmt.Sprintf("сгенерируй задание для художника в виде промпт для генерации изображения. На тему %s Максимум 500 символов", prompt.Prompt)
+	if prompt.Negative != nil && *prompt.Negative != "" {
+		gemmaPrompt += fmt.Sprintf("Негативная часть промпта должна включать %s", *prompt.Negative)
+	}
 
 	request := YdPromptRequest{
 		Model:           fmt.Sprintf("gpt://%s/yandexgpt-5-pro/latest", ydpr.ydApi.GetFolderId()),
-		Input:           "сгенерируй промпт для генерации изображения. Максимум 500 символов",
+		Input:           gemmaPrompt,
 		Temperature:     0.6,
 		MaxOutputTokens: 1000,
 		Background:      true,

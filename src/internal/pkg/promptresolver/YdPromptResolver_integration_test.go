@@ -28,7 +28,14 @@ func TestYdPrGemmaIntegration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
-	resolver := NewYdPr(nil, ydapi.NewYdApi(logger), logger)
+	ydApi, err := ydapi.NewYdApi(logger)
+	if err != nil {
+		t.Fatalf("NewYdApi() error = %v", err)
+	}
+	resolver, err := NewYdPr(nil, ydApi, logger)
+	if err != nil {
+		t.Fatalf("NewYdPr() error = %v", err)
+	}
 
 	sourcePrompt := strings.TrimSpace(os.Getenv(yandexGemmaTestPromptEnv))
 	if sourcePrompt == "" {

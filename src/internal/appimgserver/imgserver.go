@@ -14,8 +14,10 @@ import (
 	"imgserver/internal/pkg/mylogger"
 	"imgserver/internal/pkg/opermanager"
 	"imgserver/internal/pkg/promptmanager"
+	"imgserver/internal/pkg/promptresolver"
 	"imgserver/internal/pkg/rest"
 	"imgserver/internal/pkg/utils"
+	"imgserver/internal/pkg/ydapi"
 	"imgserver/internal/pkg/ydart"
 	"log/slog"
 	"net/http"
@@ -162,6 +164,19 @@ func NewImgSrv(port string, db *sql.DB) (*ImgSrv, error) {
 		return nil, fmt.Errorf("error create DirManager: %w", err)
 	}
 
+	ydApi, err := ydapi.NewYdApi(logger)
+	if err != nil {
+		logger.Error("Error create ydApi", "error", err)
+		return nil, fmt.Errorf("error create ydApi: %w", err)
+	}
+
+	//var promptResolver *promptresolver.PromptResolver
+	promptResolver, err := promptresolver.NewYdPr(promptManager, ydApi, logger)
+	if err != nil {
+		logger.Error("Error create YdPr", "error", err)
+		return nil, fmt.Errorf("error create YdPr: %w", err)
+	}
+
 	imgPrmt := imageprocessor.ImageParameters{
 		ImageHeight:  options.IframeImageParameters.ImageHeight,
 		ImageWeight:  options.IframeImageParameters.ImageWeight,
@@ -170,7 +185,7 @@ func NewImgSrv(port string, db *sql.DB) (*ImgSrv, error) {
 
 	operMng, err := opermanager.NewOperMngr(options.ImageGenerateThreshold,
 		imgPrmt,
-		options.SleepTimes, dirManager, appMetrics, logger)
+		options.SleepTimes, promptResolver, dirManager, appMetrics, logger)
 
 	if err != nil {
 		logger.Error("Error create OperManager", "error", err)
@@ -190,7 +205,7 @@ func NewImgSrv(port string, db *sql.DB) (*ImgSrv, error) {
 	// Создание провайдеров
 
 	if !utils.Contains(options.DisabledProviders, "ydArt") && options.ProvidersOptions.YdArtOptions != nil {
-		ydArt := ydart.NewYdArt(imgPrmt, promptManager, logger, options.ProvidersOptions.YdArtOptions)
+		ydArt := ydart.NewYdArt(imgPrmt, ydApi, promptManager, logger, options.ProvidersOptions.YdArtOptions)
 		iYdArt := (opermanager.ImageProvider)(ydArt)
 		err = iYdArt.SetImageParameters(&imageParameters)
 		if err != nil {

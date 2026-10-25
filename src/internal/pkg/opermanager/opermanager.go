@@ -8,6 +8,7 @@ import (
 	"imgserver/internal/pkg/dirmanager"
 	"imgserver/internal/pkg/imageprocessor"
 	"imgserver/internal/pkg/metrics"
+	"imgserver/internal/pkg/promptresolver"
 	"imgserver/internal/pkg/timerange"
 	"log/slog"
 	"math/rand"
@@ -63,6 +64,7 @@ type OperMngr struct {
 	completeOperations *cache.Cache
 	logger             *slog.Logger
 	imageProviders     []*ImageProvider
+	promptResolver     promptresolver.PromptResolver
 	//ydArt              *ydart.YdArt
 	dirManager      *dirmanager.DirManager
 	dirManagerTemp  *dirmanager.DirManager
@@ -93,6 +95,7 @@ type Operation struct {
 func NewOperMngr(thresholdMinutes int,
 	imageParameters imageprocessor.ImageParameters,
 	sleepTimes []*SleepTime,
+	promptResolver promptresolver.PromptResolver,
 	dirManager *dirmanager.DirManager,
 	metrics *metrics.AppMetrics,
 	logger *slog.Logger) (*OperMngr, error) {
@@ -108,6 +111,7 @@ func NewOperMngr(thresholdMinutes int,
 	operMng := OperMngr{
 		pendingOperations:  pendingOperations,
 		completeOperations: completeOperations,
+		promptResolver:     promptResolver,
 		dirManager:         dirManager,
 		dirManagerTemp:     dirManagerTemp,
 		logger:             logger,

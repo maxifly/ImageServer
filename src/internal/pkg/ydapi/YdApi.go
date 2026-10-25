@@ -31,10 +31,10 @@ type YdApi struct {
 	soptions   *YdArtSecretOption
 }
 
-func NewYdApi(logger *slog.Logger) *YdApi {
+func NewYdApi(logger *slog.Logger) (*YdApi, error) {
 	soptions, err := readSecretOptions()
 	if err != nil {
-		panic(fmt.Sprintf("Can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err))
+		return nil, fmt.Errorf("can not read Yandex art options: %s, %v", FILE_PATH_OPTIONS, err)
 	}
 	//logger.Debug("Options ", "options", options)
 	oapiClient := openai.NewClient(
@@ -48,10 +48,13 @@ func NewYdApi(logger *slog.Logger) *YdApi {
 		httpClient: http.DefaultClient,
 		logger:     logger,
 		soptions:   &soptions,
-	}
+	}, nil
 }
 func (ydApi *YdApi) GetFolderId() string {
 	return ydApi.soptions.FolderId
+}
+func (ydApi *YdApi) GetOapiClient() *openai.Client {
+	return &ydApi.oapiClient
 }
 func (ydApi *YdApi) Request(method RestMethod, url string, expectedStatus int, requestBody interface{}, result interface{}) error {
 	ydApi.logger.Debug("Execute request", "method", method, "url", url)
