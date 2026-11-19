@@ -579,7 +579,8 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 
 		ydOperationResult, imageData, err := (*provider).GetImageSlice(rawOperation.(*Operation).ExternalId)
 		if err != nil {
-			return nil, err
+			op.logger.Error("Get image error", "error", err)
+			return op.completeErrorOperation(id, operation, err), nil
 		}
 
 		if ydOperationResult {
