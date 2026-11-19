@@ -514,28 +514,14 @@ func (op *OperMngr) startProviderOperation(provider *ImageProvider, generationDa
 
 	return "", resultError
 }
-
-func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
-	lock := op.idMutex.GetLock(id)
-	defer op.idMutex.ReleaseLock(id)
-	lock.Lock()
-	defer lock.Unlock()
-	rawOperation, ok := op.pendingOperations.Get(id)
-
-	if !ok {
-		operation, ok := op.completeOperations.Get(id)
-		if !ok {
-			resultError := fmt.Errorf("rawOperation not found %v", id)
-			op.logger.Error("Operation not found", "error", resultError)
-			return nil, resultError
-		}
-
-		return operation.(*Operation).status, nil
+func (op *OperMngr) processPromptStage(id string, operation *Operation) (*OperStatus, error) {
+	op.logger.Debug("Process prompt stage", "id", id)
+	if operation.stage != OperationStagePrompt {
+		op.logger.Error("Can not process this stage", "stage", operation.stage)
+		return nil, fmt.Errorf("can not process this stage")
 	}
 
-	operation := rawOperation.(*Operation)
-
-	if operation.stage == OperationStagePrompt && operation.status.Status == StatusPending {
+	if operation.status.Status == StatusPending {
 		promptOperationResult, err := op.promptResolver.CheckOperation(operation.ExternalId)
 		if err != nil {
 			op.logger.Error("Error resolve prompt operation", "error", err)
@@ -568,45 +554,81 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		op.pendingOperations.SetDefault(operation.Id, operation)
 		return operation.status, nil
 
-	} else if operation.stage == OperationStagePrompt {
+	} else {
 		op.logger.Error("Unexpected prompt operation status", "status", operation.status)
 		return op.completeErrorOperation(id, operation, fmt.Errorf("unexpected prompt operation status")), nil
-	} else if operation.stage == OperationStageImage {
+	}
+}
 
-		provider := operation.Provider
+func (op *OperMngr) processImageStage(id string, operation *Operation) (*OperStatus, error) {
+	op.logger.Debug("Process image stage", "id", id)
+	if operation.stage != OperationStageImage {
+		op.logger.Error("Can not process this stage", "stage", operation.stage)
+		return nil, fmt.Errorf("can not process this stage")
+	}
 
-		isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
+	provider := operation.Provider
 
-		ydOperationResult, imageData, err := (*provider).GetImageSlice(rawOperation.(*Operation).ExternalId)
+	isNeedSaveLocalFiles := (*provider).GetProperties().IsNeedSaveLocalFiles
+
+	ydOperationResult, imageData, err := (*provider).GetImageSlice(operation.ExternalId)
+	if err != nil {
+		op.logger.Error("Get image error", "error", err)
+		return op.completeErrorOperation(id, operation, err), nil
+	}
+
+	if ydOperationResult {
+		op.logger.Debug("Generate image completed", "id", operation.Id)
+
+		fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
 		if err != nil {
-			op.logger.Error("Get image error", "error", err)
+			op.logger.Error("Error save image files", "error", err)
 			return op.completeErrorOperation(id, operation, err), nil
 		}
 
-		if ydOperationResult {
-			op.logger.Debug("Generate image completed", "id", rawOperation.(*Operation).Id)
+		op.logger.Debug("Operation completed", "id", operation.Id, "fileName", fileName)
+		operStatus := &OperStatus{Status: StatusDone, Error: ""}
+		completeOperation := operation
+		completeOperation.status = operStatus
+		completeOperation.FileName = fileName
+		op.completeOperations.SetDefault(id, completeOperation)
+		op.pendingOperations.Delete(id)
+		return operStatus, nil
 
-			fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
-			if err != nil {
-				op.logger.Error("Error save image files", "error", err)
-				return op.completeErrorOperation(id, operation, err), nil
-			}
+	}
 
-			op.logger.Debug("Operation completed", "id", rawOperation.(*Operation).Id, "fileName", fileName)
-			operStatus := &OperStatus{Status: StatusDone, Error: ""}
-			completeOperation := rawOperation.(*Operation)
-			completeOperation.status = operStatus
-			completeOperation.FileName = fileName
-			op.completeOperations.SetDefault(id, completeOperation)
-			op.pendingOperations.Delete(id)
-			return operStatus, nil
+	return &OperStatus{Status: StatusPending}, nil
 
+}
+
+func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
+	lock := op.idMutex.GetLock(id)
+	defer op.idMutex.ReleaseLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+	rawOperation, ok := op.pendingOperations.Get(id)
+
+	if !ok {
+		operation, ok := op.completeOperations.Get(id)
+		if !ok {
+			resultError := fmt.Errorf("rawOperation not found %v", id)
+			op.logger.Error("Operation not found", "error", resultError)
+			return nil, resultError
 		}
 
-		return &OperStatus{Status: StatusPending}, nil
+		return operation.(*Operation).status, nil
 	}
-	op.logger.Error("Unexpected operation stage", "stage", operation.stage)
-	return op.completeErrorOperation(id, operation, fmt.Errorf("unexpected operation stage")), nil
+
+	operation := rawOperation.(*Operation)
+	switch operation.stage {
+	case OperationStagePrompt:
+		return op.processPromptStage(id, operation)
+	case OperationStageImage:
+		return op.processImageStage(id, operation)
+	default:
+		op.logger.Error("Unexpected operation stage", "stage", operation.stage)
+		return op.completeErrorOperation(id, operation, fmt.Errorf("unexpected operation stage")), nil
+	}
 
 }
 
