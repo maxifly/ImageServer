@@ -584,21 +584,22 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 		}
 
 		if ydOperationResult {
-			op.logger.Debug("Operation completed", "id", rawOperation.(*Operation).Id)
-			operStatus := &OperStatus{Status: StatusDone, Error: ""}
+			op.logger.Debug("Generate image completed", "id", rawOperation.(*Operation).Id)
 
 			fileName, err := op.saveFiles(id, imageData, isNeedSaveLocalFiles)
 			if err != nil {
-				operStatus = &OperStatus{Status: StatusError, Error: err.Error()}
+				op.logger.Error("Error save image files", "error", err)
+				return op.completeErrorOperation(id, operation, err), nil
 			}
 
 			op.logger.Debug("Operation completed", "id", rawOperation.(*Operation).Id, "fileName", fileName)
-
+			operStatus := &OperStatus{Status: StatusDone, Error: ""}
 			completeOperation := rawOperation.(*Operation)
 			completeOperation.status = operStatus
 			completeOperation.FileName = fileName
 			op.completeOperations.SetDefault(id, completeOperation)
 			op.pendingOperations.Delete(id)
+			return operStatus, nil
 
 		}
 
@@ -610,7 +611,6 @@ func (op *OperMngr) GetOperationStatus(id string) (*OperStatus, error) {
 }
 
 func (op *OperMngr) completeErrorOperation(id string, errorOperation *Operation, err error) *OperStatus {
-	op.logger.Error("Error resolve prompt operation", "error", err)
 	errorOperation.status = &OperStatus{
 		Status: StatusError,
 		Error:  err.Error()}
