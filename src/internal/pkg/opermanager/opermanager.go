@@ -56,9 +56,8 @@ type SleepTime struct {
 }
 
 type NextGenerationData struct {
-	GenerationParameters *GenerationParameters
-	PromptId             string
-	Provider             string
+	GenerationData *GenerationData
+	Provider       string
 }
 
 type GenerationData struct {
@@ -188,10 +187,10 @@ func (op *OperMngr) GetProviders() []Provider {
 	return result
 }
 
-func (op *OperMngr) AddOperationIntoQueue(providerCode string, parameters GenerationParameters) error {
+func (op *OperMngr) AddOperationIntoQueue(providerCode string, generationData GenerationData) error {
 	op.mutexNG.Lock()
 	defer op.mutexNG.Unlock()
-	op.nextGeneration = &NextGenerationData{Provider: providerCode, GenerationParameters: &parameters}
+	op.nextGeneration = &NextGenerationData{Provider: providerCode, GenerationData: &generationData}
 	return nil
 }
 
@@ -376,8 +375,8 @@ func (op *OperMngr) startQueueOperation(data *NextGenerationData) (string, error
 	}
 
 	return op.startProviderOperation(provider,
-		&GenerationData{GenerationParameters: data.GenerationParameters,
-			PromptId: data.PromptId}, true)
+		data.GenerationData,
+		true)
 
 }
 

@@ -335,19 +335,16 @@ func (rest *Rest) handleGenerateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, ok := rest.promptManager.GetPromptByCode(generateReq.PromptID)
+	_, ok := rest.promptManager.GetPromptByCode(generateReq.PromptID)
 	if !ok {
 		rest.logger.Error("Cannot find prompt", "id", generateReq.PromptID)
 		http.Error(w, "Cannot find prompt", http.StatusUnprocessableEntity)
 		return
 	}
 
-	promptValue := rest.promptManager.GetPromptValue(prompt)
-
 	err = rest.operMng.AddOperationIntoQueue(generateReq.Provider,
-		opermanager.GenerationParameters{
-			PromptText:   promptValue.Prompt,
-			NegativeText: promptValue.Negative,
+		opermanager.GenerationData{
+			PromptId: generateReq.PromptID,
 		})
 	if err != nil {
 		rest.logger.Error("Cannot add prompt into queue", "error", err)
